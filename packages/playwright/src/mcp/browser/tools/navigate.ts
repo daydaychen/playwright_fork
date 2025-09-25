@@ -26,6 +26,9 @@ const navigate = defineTool({
     description: 'Navigate to a URL',
     inputSchema: z.object({
       url: z.string().describe('The URL to navigate to'),
+      includeConsoleLog: z.boolean().optional().describe('Whether to include console logs in the snapshot').default(false),
+      includeDownload: z.boolean().optional().describe('Whether to include download events in the snapshot').default(false),
+      includeAriaSnapshot: z.boolean().optional().describe('Whether to include ARIA snapshot in the snapshot').default(true),
     }),
     type: 'destructive',
   },

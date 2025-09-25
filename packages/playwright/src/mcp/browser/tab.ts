@@ -42,6 +42,7 @@ export type TabSnapshot = {
   url: string;
   title: string;
   ariaSnapshot: string;
+  desc?: string;
   modalStates: ModalState[];
   consoleMessages: ConsoleMessage[];
   downloads: { download: playwright.Download, finished: boolean, outputFile: string }[];
@@ -219,10 +220,12 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     let tabSnapshot: TabSnapshot | undefined;
     const modalStates = await this._raceAgainstModalStates(async () => {
       const snapshot = await (this.page as PageEx)._snapshotForAI();
+      const html = await this.page.content();
       tabSnapshot = {
         url: this.page.url(),
         title: await this.page.title(),
         ariaSnapshot: snapshot,
+        desc: `<truncated for brevity, length ${html.length}>`,
         modalStates: [],
         consoleMessages: [],
         downloads: this._downloads,

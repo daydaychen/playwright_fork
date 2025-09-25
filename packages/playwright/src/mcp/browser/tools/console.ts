@@ -22,12 +22,25 @@ const console = defineTabTool({
   schema: {
     name: 'browser_console_messages',
     title: 'Get console messages',
-    description: 'Returns all console messages',
-    inputSchema: z.object({}),
+    description: 'Returns all console messages, optionally filtered by type inclusion or exclusion',
+    inputSchema: z.object({
+      includeType: z.string().optional().describe('Include only messages of this type (e.g., log, error, warning, info, debug)'),
+      excludeType: z.string().optional().describe('Exclude messages of this type (e.g., log, error, warning, info, debug)').default('warning'),
+    }),
     type: 'readOnly',
   },
   handle: async (tab, params, response) => {
-    tab.consoleMessages().map(message => response.addResult(message.toString()));
+    let messages = tab.consoleMessages();
+
+    if (params.includeType)
+      messages = messages.filter(message => message.type === params.includeType);
+
+
+    if (params.excludeType)
+      messages = messages.filter(message => message.type !== params.excludeType);
+
+
+    messages.map(message => response.addResult(message.toString()));
   },
 });
 

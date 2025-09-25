@@ -1,0 +1,17 @@
+{
+    "browser": {
+        "isolated": true,
+        "launchOptions": {
+            "headless": true,
+            "executablePath": "/Applications/Chromium.app/Contents/MacOS/Chromium"
+        }
+    },
+    "server": {
+        "port": 3232,
+        "host": "127.0.0.1"
+    },
+    "capabilities": [],
+    "imageResponses": "omit",
+    "saveTrace": false,
+    "outputDir": "logs"
+}

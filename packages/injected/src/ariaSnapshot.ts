@@ -51,6 +51,7 @@ let lastRef = 0;
 export type AriaTreeOptions = {
   mode: 'ai' | 'expect' | 'codegen' | 'autoexpect';
   refPrefix?: string;
+  includeHTMLAttributes?: boolean;
 };
 
 type InternalOptions = {
@@ -517,6 +518,21 @@ export function renderAriaTree(ariaSnapshot: AriaSnapshot, publicOptions: AriaTr
       if (name) {
         const stringifiedName = name.startsWith('/') && name.endsWith('/') ? name : JSON.stringify(name);
         key += ' ' + stringifiedName;
+      }
+    }
+    if (publicOptions.includeHTMLAttributes !== false) {
+      const element = ariaNode.element;
+      if (element) {
+        key += ` [tag=${element.tagName.toLowerCase()}]`;
+        if (element.id)
+          key += ` [id=${element.id}]`;
+        if (element.className)
+          key += ` [class=${element.className}]`;
+        for (let i = 0; i < element.attributes.length; i++) {
+          const attr = element.attributes[i];
+          if (attr.name.startsWith('data-'))
+            key += ` [${attr.name}=${attr.value}]`;
+        }
       }
     }
     if (ariaNode.checked === 'mixed')

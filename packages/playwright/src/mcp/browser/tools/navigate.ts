@@ -28,7 +28,7 @@ const navigate = defineTool({
       url: z.string().describe('The URL to navigate to'),
       includeConsoleLog: z.boolean().optional().describe('Whether to include console logs in the snapshot').default(false),
       includeDownload: z.boolean().optional().describe('Whether to include download events in the snapshot').default(false),
-      includeAriaSnapshot: z.boolean().optional().describe('Whether to include ARIA snapshot in the snapshot').default(false),
+      includeAriaSnapshot: z.boolean().optional().describe('Whether to include ARIA snapshot in the snapshot').default(true),
     }),
     type: 'destructive',
   },
@@ -48,7 +48,9 @@ const goBack = defineTabTool({
     name: 'browser_navigate_back',
     title: 'Go back',
     description: 'Go back to the previous page',
-    inputSchema: z.object({}),
+    inputSchema: z.object({
+      includeAriaSnapshot: z.boolean().optional().describe('Whether to include ARIA snapshot in the snapshot').default(false),
+    }),
     type: 'readOnly',
   },
 

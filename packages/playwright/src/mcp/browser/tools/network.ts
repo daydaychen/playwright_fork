@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { isTextualMimeType } from 'playwright-core/lib/utils';
+import { isJsonMimeType, isTextualMimeType } from 'playwright-core/lib/utils';
 import { z } from '../../sdk/bundle';
 import { defineTabTool } from './tool';
+
 
 import type * as playwright from 'playwright-core';
 
@@ -69,6 +70,39 @@ async function renderRequest(request: playwright.Request, response: playwright.R
   };
 }
 
+function truncateText(body: Buffer): string {
+  const maxBodySize = 2048;
+  if (body.length > maxBodySize)
+    return body.slice(0, maxBodySize).toString('utf-8') + `\n\n... (response body truncated, size: ${body.length} bytes)`;
+  return body.toString('utf-8');
+}
+
+function truncateJson(value: any, options: { maxArrayLength: number, maxStringLength: number }): any {
+  if (value === null || typeof value !== 'object')
+    return value;
+
+  if (Array.isArray(value)) {
+    if (value.length > options.maxArrayLength) {
+      const truncated = value.slice(0, options.maxArrayLength).map(item => truncateJson(item, options));
+      truncated.push(`... (truncated, original length: ${value.length})`);
+      return truncated;
+    }
+    return value.map(item => truncateJson(item, options));
+  }
+
+  const newObj: { [key: string]: any } = {};
+  for (const key in value) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const propValue = value[key];
+      if (typeof propValue === 'string' && propValue.length > options.maxStringLength)
+        newObj[key] = propValue.substring(0, options.maxStringLength) + `... (string truncated, original length: ${propValue.length})`;
+      else
+        newObj[key] = truncateJson(propValue, options);
+    }
+  }
+  return newObj;
+}
+
 const getResponse = defineTabTool({
   capability: 'core',
   schema: {
@@ -105,9 +139,20 @@ const getResponse = defineTabTool({
       const headers = await res.allHeaders();
       const contentType = (headers['content-type'] || '').toLowerCase();
 
-      if (isTextualMimeType(contentType)) {
-        const text = await res.text();
-        response.addResult(text);
+      if (isJsonMimeType(contentType)) {
+        try {
+          const json = await res.json();
+          const truncated = truncateJson(json, { maxArrayLength: 5, maxStringLength: 300 });
+          let resultString = JSON.stringify(truncated);
+          const maxJsonSize = 8192; // 8KB for JSON
+          if (resultString.length > maxJsonSize)
+            resultString = resultString.substring(0, maxJsonSize) + `\n\n... (JSON response truncated, total size: ${resultString.length} bytes)`;
+          response.addResult(resultString);
+        } catch (e) {
+          response.addResult(truncateText(await res.body()));
+        }
+      } else if (isTextualMimeType(contentType)) {
+        response.addResult(truncateText(await res.body()));
       } else if (contentType.startsWith('image/')) {
         const buffer = await res.body();
         response.addImage({ contentType, data: buffer });

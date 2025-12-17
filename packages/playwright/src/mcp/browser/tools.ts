@@ -34,6 +34,7 @@ import tabs from './tools/tabs';
 import tracing from './tools/tracing';
 import wait from './tools/wait';
 import verify from './tools/verify';
+import xpath from './tools/xpath';
 
 import type { Tool } from './tools/tool';
 import type { FullConfig } from './config';
@@ -59,6 +60,7 @@ export const browserTools: Tool<any>[] = [
   ...tracing,
   ...wait,
   ...verify,
+  ...xpath,
 ];
 
 export function filteredTools(config: FullConfig) {

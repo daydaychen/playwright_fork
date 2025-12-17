@@ -23,16 +23,36 @@ const navigate = defineTool({
   schema: {
     name: 'browser_navigate',
     title: 'Navigate to a URL',
-    description: 'Navigate to a URL',
+    description: `Navigate to a URL and return an ariaSnapshot of the page structure.
+
+**About ariaSnapshot Output:**
+The snapshot includes semantic roles and HTML attributes to help you locate elements:
+- [tag=xxx]: HTML tag name (e.g., div, button, a)
+- [id=xxx]: Element ID attribute (prefer stable, semantic IDs)
+- [class=xxx]: CSS class names (prefer semantic classes, avoid auto-generated ones like css-1a2b3c)
+- [data-*=xxx]: Data attributes (often stable and designed for testing/selection)
+- [ref=xxx]: Internal reference for snapshot tracking (⚠️ DO NOT use in XPath - this is NOT a real DOM attribute)
+
+**For XPath Generation:**
+Use only real DOM attributes visible in the snapshot (id, class, data-*, tag names).
+Prioritize stable attributes that won't change across page loads, user sessions, or dynamic updates.
+The [ref=xxx] attribute is snapshot-specific and does not exist in the actual HTML DOM.`,
     inputSchema: z.object({
       url: z.string().describe('The URL to navigate to'),
+      loadMode: z
+          .enum(['full', 'medium', 'fast'])
+          .optional()
+          .describe(
+              'Resource loading mode: "full" loads all resources, "medium" blocks images and fonts (default), "fast" blocks images, stylesheets, and fonts'
+          )
+          .default('medium')
     }),
     type: 'action',
   },
 
   handle: async (context, params, response) => {
     const tab = await context.ensureTab();
-    await tab.navigate(params.url);
+    await tab.navigate(params.url, { loadMode: params.loadMode });
 
     response.setIncludeSnapshot();
     response.addCode(`await page.goto('${params.url}');`);

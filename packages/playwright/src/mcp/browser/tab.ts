@@ -187,9 +187,32 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     await callOnPageNoTrace(this.page, page => page.waitForLoadState(state, options).catch(logUnhandledError));
   }
 
-  async navigate(url: string) {
+  async navigate(url: string, options?: { loadMode?: 'full' | 'medium' | 'fast' }) {
     await this._initializedPromise;
     this._clearCollectedArtifacts();
+
+    const loadMode = options?.loadMode || 'full';
+
+    // Setup resource blocking based on loadMode
+    if (loadMode !== 'full') {
+      const blockedTypes: string[] = [];
+      if (loadMode === 'fast') {
+        // Fast mode: block images, stylesheets, and fonts
+        blockedTypes.push('image', 'stylesheet', 'font');
+      } else if (loadMode === 'medium') {
+        // Medium mode: block only images and fonts
+        blockedTypes.push('image', 'font');
+      }
+
+      await this.page.route('**/*', route => {
+        const resourceType = route.request().resourceType();
+
+        if (blockedTypes.includes(resourceType))
+          return route.abort();
+
+        return route.continue();
+      });
+    }
 
     const { promise: downloadEvent, abort: abortDownloadEvent } = eventWaiter<playwright.Download>(this.page, 'download', 3000);
     try {

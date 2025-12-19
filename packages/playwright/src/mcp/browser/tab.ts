@@ -195,16 +195,15 @@ export class Tab extends EventEmitter<TabEventsInterface> {
 
     // Setup resource blocking based on loadMode
     if (loadMode !== 'full') {
-      const blockedTypes: string[] = [];
-      if (loadMode === 'fast') {
-        // Fast mode: block images, stylesheets, and fonts
-        blockedTypes.push('image', 'stylesheet', 'font');
-      } else if (loadMode === 'medium') {
-        // Medium mode: block only images and fonts
-        blockedTypes.push('image', 'font');
-      }
-
       await this.page.route('**/*', route => {
+        const blockedTypes: string[] = [];
+        if (loadMode === 'fast') {
+          // Fast mode: block images, stylesheets, and fonts
+          blockedTypes.push('image', 'stylesheet', 'font');
+        } else if (loadMode === 'medium') {
+          // Medium mode: block only images and fonts
+          blockedTypes.push('image', 'font');
+        }
         const resourceType = route.request().resourceType();
 
         if (blockedTypes.includes(resourceType))
@@ -240,7 +239,9 @@ export class Tab extends EventEmitter<TabEventsInterface> {
 
   async consoleMessages(level: ConsoleMessageLevel): Promise<ConsoleMessage[]> {
     await this._initializedPromise;
-    return this._consoleMessages.filter(message => shouldIncludeMessage(level, message.type));
+    return this._consoleMessages
+        .filter(message => shouldIncludeMessage(level, message.type))
+        .filter(message => shouldExcludeMessage(message.text));
   }
 
   async requests(): Promise<Set<playwright.Request>> {
@@ -265,7 +266,9 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     });
     if (tabSnapshot) {
       // Assign console message late so that we did not lose any to modal state.
-      tabSnapshot.consoleMessages = this._recentConsoleMessages.filter(message => shouldIncludeMessage(this.context.config.console.level, message.type));
+      tabSnapshot.consoleMessages = this._recentConsoleMessages
+          .filter(message => shouldIncludeMessage(this.context.config.console.level, message.type))
+          .filter(message => shouldExcludeMessage(message.text));
       this._recentConsoleMessages = [];
     }
     // If we failed to capture a snapshot this time, make sure we do a full one next time,
@@ -412,6 +415,10 @@ function consoleLevelForMessageType(type: ConsoleMessageType): ConsoleMessageLev
     default:
       return 'info';
   }
+}
+
+function shouldExcludeMessage(text: string): boolean {
+  return !text.includes('Failed to load resource');
 }
 
 const tabSymbol = Symbol('tabSymbol');

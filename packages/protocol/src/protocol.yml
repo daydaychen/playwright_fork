@@ -2019,9 +2019,12 @@ Page:
         api: string?
         apiKey: string?
         apiEndpoint: string?
+        apiTimeout: int?
+        apiCacheFile: string?
         cacheFile: string?
         cacheOutFile: string?
-        maxTurns: int?
+        maxActions: int?
+        maxActionRetries: int?
         maxTokens: int?
         model: string?
         secrets:
@@ -4320,7 +4323,7 @@ PageAgent:
 
   commands:
     perform:
-      internal: true
+      title: 'Perform "{task}"'
       parameters:
         task: string
         $mixin: PageAgentOptions
@@ -4329,7 +4332,7 @@ PageAgent:
         usage: AgentUsage
 
     expect:
-      internal: true
+      title: 'Expect "{expectation}"'
       parameters:
         expectation: string
         $mixin: PageAgentOptions
@@ -4338,7 +4341,7 @@ PageAgent:
         usage: AgentUsage
 
     extract:
-      internal: true
+      title: 'Extract "{query}"'
       parameters:
         query: string
         schema: json
@@ -4350,6 +4353,12 @@ PageAgent:
 
     dispose:
       internal: true
+
+    usage:
+      title: 'Get agent usage'
+      group: configuration
+      returns:
+        usage: AgentUsage
 
   events:
 
@@ -4367,9 +4376,11 @@ PageAgent:
 PageAgentOptions:
   type: mixin
   properties:
-    maxTurns: int?
+    maxActions: int?
+    maxActionRetries: int?
     maxTokens: int?
     cacheKey: string?
+    timeout: int?
 
 AgentUsage:
   type: object

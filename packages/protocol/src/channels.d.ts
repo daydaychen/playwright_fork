@@ -2586,9 +2586,12 @@ export type PageAgentParams = {
   api?: string,
   apiKey?: string,
   apiEndpoint?: string,
+  apiTimeout?: number,
+  apiCacheFile?: string,
   cacheFile?: string,
   cacheOutFile?: string,
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   model?: string,
   secrets?: NameValue[],
@@ -2598,9 +2601,12 @@ export type PageAgentOptions = {
   api?: string,
   apiKey?: string,
   apiEndpoint?: string,
+  apiTimeout?: number,
+  apiCacheFile?: string,
   cacheFile?: string,
   cacheOutFile?: string,
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   model?: string,
   secrets?: NameValue[],
@@ -5101,6 +5107,7 @@ export interface PageAgentChannel extends PageAgentEventTarget, EventTargetChann
   expect(params: PageAgentExpectParams, progress?: Progress): Promise<PageAgentExpectResult>;
   extract(params: PageAgentExtractParams, progress?: Progress): Promise<PageAgentExtractResult>;
   dispose(params?: PageAgentDisposeParams, progress?: Progress): Promise<PageAgentDisposeResult>;
+  usage(params?: PageAgentUsageParams, progress?: Progress): Promise<PageAgentUsageResult>;
 }
 export type PageAgentTurnEvent = {
   role: string,
@@ -5112,28 +5119,36 @@ export type PageAgentTurnEvent = {
 };
 export type PageAgentPerformParams = {
   task: string,
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   cacheKey?: string,
+  timeout?: number,
 };
 export type PageAgentPerformOptions = {
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   cacheKey?: string,
+  timeout?: number,
 };
 export type PageAgentPerformResult = {
   usage: AgentUsage,
 };
 export type PageAgentExpectParams = {
   expectation: string,
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   cacheKey?: string,
+  timeout?: number,
 };
 export type PageAgentExpectOptions = {
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   cacheKey?: string,
+  timeout?: number,
 };
 export type PageAgentExpectResult = {
   usage: AgentUsage,
@@ -5141,14 +5156,18 @@ export type PageAgentExpectResult = {
 export type PageAgentExtractParams = {
   query: string,
   schema: any,
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   cacheKey?: string,
+  timeout?: number,
 };
 export type PageAgentExtractOptions = {
-  maxTurns?: number,
+  maxActions?: number,
+  maxActionRetries?: number,
   maxTokens?: number,
   cacheKey?: string,
+  timeout?: number,
 };
 export type PageAgentExtractResult = {
   result: any,
@@ -5157,6 +5176,11 @@ export type PageAgentExtractResult = {
 export type PageAgentDisposeParams = {};
 export type PageAgentDisposeOptions = {};
 export type PageAgentDisposeResult = void;
+export type PageAgentUsageParams = {};
+export type PageAgentUsageOptions = {};
+export type PageAgentUsageResult = {
+  usage: AgentUsage,
+};
 
 export interface PageAgentEvents {
   'turn': PageAgentTurnEvent;

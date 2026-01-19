@@ -40,18 +40,30 @@ export class PageAgentDispatcher extends Dispatcher<SdkObject, channels.PageAgen
   }
 
   async perform(params: channels.PageAgentPerformParams, progress: Progress): Promise<channels.PageAgentPerformResult> {
-    await pageAgentPerform(progress, this._context, params.task, params);
+    try {
+      await pageAgentPerform(progress, this._context, params.task, params);
+    } finally {
+      this._context.pushHistory({ type: 'perform', description: params.task });
+    }
     return { usage: this._usage };
   }
 
   async expect(params: channels.PageAgentExpectParams, progress: Progress): Promise<channels.PageAgentExpectResult> {
-    await pageAgentExpect(progress, this._context, params.expectation, params);
+    try {
+      await pageAgentExpect(progress, this._context, params.expectation, params);
+    } finally {
+      this._context.pushHistory({ type: 'expect', description: params.expectation });
+    }
     return { usage: this._usage };
   }
 
   async extract(params: channels.PageAgentExtractParams, progress: Progress): Promise<channels.PageAgentExtractResult> {
     const result = await pageAgentExtract(progress, this._context, params.query, params.schema, params);
     return { result, usage: this._usage };
+  }
+
+  async usage(params: channels.PageAgentUsageParams, progress: Progress): Promise<channels.PageAgentUsageResult> {
+    return { usage: this._usage };
   }
 
   async dispose(params: channels.PageAgentDisposeParams, progress: Progress): Promise<void> {
@@ -63,7 +75,6 @@ export class PageAgentDispatcher extends Dispatcher<SdkObject, channels.PageAgen
       onBeforeTurn(params: { conversation: loopTypes.Conversation }) {
         const userMessage = params.conversation.messages.find(m => m.role === 'user');
         self._dispatchEvent('turn', { role: 'user', message: userMessage?.content ?? '' });
-        return 'continue' as const;
       },
 
       onAfterTurn(params: { assistantMessage: loopTypes.AssistantMessage, totalUsage: loopTypes.Usage }) {
@@ -73,23 +84,19 @@ export class PageAgentDispatcher extends Dispatcher<SdkObject, channels.PageAgen
         if (!params.assistantMessage.content.filter(c => c.type === 'tool_call').length)
           self._dispatchEvent('turn', { role: 'assistant', message: `no tool calls`, usage });
         self._usage = { turns: self._usage.turns + 1, inputTokens: self._usage.inputTokens + usage.inputTokens, outputTokens: self._usage.outputTokens + usage.outputTokens };
-        return 'continue' as const;
       },
 
       onBeforeToolCall(params: { toolCall: loopTypes.ToolCallContentPart }) {
         self._dispatchEvent('turn', { role: 'assistant', message: `call tool "${params.toolCall.name}"` });
-        return 'continue' as const;
       },
 
       onAfterToolCall(params: { toolCall: loopTypes.ToolCallContentPart, result: loopTypes.ToolResult }) {
         const suffix = params.toolCall.result?.isError ? 'failed' : 'succeeded';
         self._dispatchEvent('turn', { role: 'user', message: `tool "${params.toolCall.name}" ${suffix}` });
-        return 'continue' as const;
       },
 
       onToolCallError(params: { toolCall: loopTypes.ToolCallContentPart, error: Error }) {
         self._dispatchEvent('turn', { role: 'user', message: `tool "${params.toolCall.name}" failed: ${params.error.message}` });
-        return 'continue' as const;
       }
     };
   }

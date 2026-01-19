@@ -462,12 +462,9 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     const cacheFile = testInfoImpl.config.runAgents === 'all' ? undefined : await testInfoImpl._cloneStorage(resolvedCacheFile);
     const cacheOutFile = path.join(testInfoImpl.artifactsDir(), 'agent-cache-' + createGuid() + '.json');
 
-    const provider = agentOptions?.api && testInfo.config.runAgents !== 'none' ? {
-      api: agentOptions.api as any,
-      apiEndpoint: agentOptions.apiEndpoint,
-      apiKey: agentOptions.apiKey,
-      model: agentOptions.model,
-    } : undefined;
+    const provider = agentOptions?.provider && testInfo.config.runAgents !== 'none' ? agentOptions.provider : undefined;
+    if (provider)
+      testInfo.setTimeout(0);
 
     const cache = {
       cacheFile,
@@ -477,12 +474,16 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     const agent = await page.agent({
       provider,
       cache,
-      maxTokens: agentOptions?.maxTokens,
-      maxTurns: agentOptions?.maxTurns,
+      limits: agentOptions?.limits,
       secrets: agentOptions?.secrets,
+      systemPrompt: agentOptions?.systemPrompt,
     });
 
     await use(agent);
+
+    const usage = await agent.usage();
+    if (usage.turns > 0)
+      await testInfoImpl.attach('agent-usage', { contentType: 'application/json', body: Buffer.from(JSON.stringify(usage, null, 2)) });
 
     if (!resolvedCacheFile || !cacheOutFile)
       return;

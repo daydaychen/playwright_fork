@@ -313,8 +313,9 @@ export const methodMetainfo = new Map<string, { internal?: boolean, title?: stri
   ['AndroidDevice.close', { internal: true, }],
   ['JsonPipe.send', { internal: true, }],
   ['JsonPipe.close', { internal: true, }],
-  ['PageAgent.perform', { internal: true, }],
-  ['PageAgent.expect', { internal: true, }],
-  ['PageAgent.extract', { internal: true, }],
-  ['PageAgent.dispose', { internal: true, }]
+  ['PageAgent.perform', { title: 'Perform "{task}"', }],
+  ['PageAgent.expect', { title: 'Expect "{expectation}"', }],
+  ['PageAgent.extract', { title: 'Extract "{query}"', }],
+  ['PageAgent.dispose', { internal: true, }],
+  ['PageAgent.usage', { title: 'Get agent usage', group: 'configuration', }]
 ]);

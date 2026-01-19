@@ -17,6 +17,10 @@
 import type { APIRequestContext, Browser, BrowserContext, BrowserContextOptions, Page, PageAgent, LaunchOptions, ViewportSize, Geolocation, HTTPCredentials, Locator, APIResponse, PageScreenshotOptions } from 'playwright-core';
 export * from 'playwright-core';
 
+// @ts-ignore ReactCSSProperties will be any if react is not installed
+type ReactCSSProperties = import('react').CSSProperties;
+export type CSSProperties = keyof ReactCSSProperties extends string ? ReactCSSProperties : never;
+
 export type BlobReporterOptions = { outputDir?: string, fileName?: string };
 export type ListReporterOptions = { printSteps?: boolean };
 export type JUnitReporterOptions = { outputFile?: string, stripANSIControlSequences?: boolean, includeProjectInTestName?: boolean };
@@ -266,15 +270,22 @@ export type ScreenshotMode = 'off' | 'on' | 'only-on-failure' | 'on-first-failur
 export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure';
 export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry';
 export type AgentOptions = {
-  api: string;
-  apiKey: string;
-  apiEndpoint?: string;
-  model: string;
+  provider?: {
+    api: 'openai' | 'openai-compatible' | 'anthropic' | 'google';
+    apiEndpoint?: string;
+    apiKey: string;
+    apiTimeout?: number;
+    model: string;
+  },
+  limits?: {
+    maxTokens?: number;
+    maxActions?: number;
+    maxActionRetries?: number;
+  };
   cachePathTemplate?: string;
-  maxTurns?: number;
-  maxTokens?: number;
   runAgents?: 'all' | 'missing' | 'none';
   secrets?: { [key: string]: string };
+  systemPrompt?: string;
 };
 
 export interface PlaywrightTestOptions {

@@ -18,6 +18,10 @@
 import type { APIRequestContext, Browser, BrowserContext, BrowserContextOptions, Page, PageAgent, LaunchOptions, ViewportSize, Geolocation, HTTPCredentials, Locator, APIResponse, PageScreenshotOptions } from 'playwright-core';
 export * from 'playwright-core';
 
+// @ts-ignore ReactCSSProperties will be any if react is not installed
+type ReactCSSProperties = import('react').CSSProperties;
+export type CSSProperties = keyof ReactCSSProperties extends string ? ReactCSSProperties : never;
+
 export type BlobReporterOptions = { outputDir?: string, fileName?: string };
 export type ListReporterOptions = { printSteps?: boolean };
 export type JUnitReporterOptions = { outputFile?: string, stripANSIControlSequences?: boolean, includeProjectInTestName?: boolean };
@@ -6951,15 +6955,22 @@ export type ScreenshotMode = 'off' | 'on' | 'only-on-failure' | 'on-first-failur
 export type TraceMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry' | 'on-all-retries' | 'retain-on-first-failure';
 export type VideoMode = 'off' | 'on' | 'retain-on-failure' | 'on-first-retry';
 export type AgentOptions = {
-  api: string;
-  apiKey: string;
-  apiEndpoint?: string;
-  model: string;
+  provider?: {
+    api: 'openai' | 'openai-compatible' | 'anthropic' | 'google';
+    apiEndpoint?: string;
+    apiKey: string;
+    apiTimeout?: number;
+    model: string;
+  },
+  limits?: {
+    maxTokens?: number;
+    maxActions?: number;
+    maxActionRetries?: number;
+  };
   cachePathTemplate?: string;
-  maxTurns?: number;
-  maxTokens?: number;
   runAgents?: 'all' | 'missing' | 'none';
   secrets?: { [key: string]: string };
+  systemPrompt?: string;
 };
 
 /**
@@ -9167,6 +9178,32 @@ interface LocatorAssertions {
    * @param options
    */
   toHaveCSS(name: string, value: string|RegExp, options?: {
+    /**
+     * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
+     */
+    timeout?: number;
+  }): Promise<void>;
+
+  /**
+   * Ensures the [Locator](https://playwright.dev/docs/api/class-locator) resolves to an element with the given computed
+   * CSS properties.
+   *
+   * **NOTE** The `CSSProperties` object parameter for toHaveCSS requires `react` to be installed for type checking.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const locator = page.getByRole('button');
+   * await expect(locator).toHaveCSS({
+   *   display: 'flex',
+   *   backgroundColor: 'rgb(255, 0, 0)'
+   * });
+   * ```
+   *
+   * @param styles CSS properties object.
+   * @param options
+   */
+  toHaveCSS(styles: CSSProperties, options?: {
     /**
      * Time to retry the assertion for in milliseconds. Defaults to `timeout` in `TestConfig.expect`.
      */

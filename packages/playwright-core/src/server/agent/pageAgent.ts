@@ -15,16 +15,17 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 
 import { toolsForLoop } from './tool';
 import { debug } from '../../utilsBundle';
-import { Loop } from '../../mcpBundle';
+import { Loop, z as zod } from '../../mcpBundle';
 import { runAction } from './actionRunner';
 import { Context } from './context';
 import performTools from './performTools';
 import expectTools from './expectTools';
 
-import type * as actions from './actions';
+import * as actions from './actions';
 import type { ToolDefinition } from './tool';
 import type * as loopTypes from '@lowire/loop';
 import type { Progress } from '../progress';
@@ -32,7 +33,8 @@ import type { Progress } from '../progress';
 export type CallParams = {
   cacheKey?: string;
   maxTokens?: number;
-  maxTurns?: number;
+  maxActions?: number;
+  maxActionRetries?: number;
 };
 
 export async function pageAgentPerform(progress: Progress, context: Context, userTask: string, callParams: CallParams) {
@@ -50,7 +52,6 @@ ${userTask}
 `;
 
   await runLoop(progress, context, performTools, task, undefined, callParams);
-  context.history.push({ type: 'perform', description: userTask });
   await updateCache(context, cacheKey);
 }
 
@@ -69,7 +70,6 @@ ${expectation}
 `;
 
   await runLoop(progress, context, expectTools, task, undefined, callParams);
-  context.history.push({ type: 'expect', description: expectation });
   await updateCache(context, cacheKey);
 }
 
@@ -82,7 +82,6 @@ Extract the following information from the page. Do not perform any actions, jus
 ### Query
 ${query}`;
   const { result } = await runLoop(progress, context, [], task, schema, callParams);
-  context.history.push({ type: 'extract', description: query });
   return result;
 }
 
@@ -90,23 +89,34 @@ async function runLoop(progress: Progress, context: Context, toolDefinitions: To
   result: any
 }> {
   const { page } = context;
-  if (!context.agentParams.api || !context.agentParams.apiKey || !context.agentParams.model)
-    throw new Error(`This action requires the API and API key to be set on the page agent. Are you running with --run-agents=none mode?`);
+  if (!context.agentParams.api || !context.agentParams.model)
+    throw new Error(`This action requires the API and API key to be set on the page agent. Did you mean to --run-agents=missing?`);
+  if (!context.agentParams.apiKey)
+    throw new Error(`This action requires API key to be set on the page agent.`);
 
   const { full } = await page.snapshotForAI(progress);
-  const { tools, callTool, reportedResult } = toolsForLoop(progress, context, toolDefinitions, { resultSchema });
+  const { tools, callTool, reportedResult, refusedToPerformReason } = toolsForLoop(progress, context, toolDefinitions, { resultSchema, refuseToPerform: 'allow' });
+  const secrets = Object.fromEntries((context.agentParams.secrets || [])?.map(s => ([s.name, s.value])));
+
+  const apiCacheTextBefore = context.agentParams.apiCacheFile ?
+    await fs.promises.readFile(context.agentParams.apiCacheFile, 'utf-8').catch(() => '{}') : '{}';
+  const apiCacheBefore = JSON.parse(apiCacheTextBefore);
 
   const loop = new Loop({
     api: context.agentParams.api as any,
     apiEndpoint: context.agentParams.apiEndpoint,
     apiKey: context.agentParams.apiKey,
+    apiTimeout: context.agentParams.apiTimeout ?? 0,
     model: context.agentParams.model,
-    maxTurns: params.maxTurns ?? context.agentParams.maxTurns,
-    maxTokens: params.maxTokens ?? context.agentParams.maxTokens,
+    maxTokens: params.maxTokens ?? context.maxTokensRemaining(),
+    maxToolCalls: params.maxActions ?? context.agentParams.maxActions ?? 10,
+    maxToolCallRetries: params.maxActionRetries ?? context.agentParams.maxActionRetries ?? 3,
     summarize: true,
     debug,
     callTool,
     tools,
+    secrets,
+    cache: apiCacheBefore,
     ...context.events,
   });
 
@@ -120,23 +130,35 @@ async function runLoop(progress: Progress, context: Context, toolDefinitions: To
   task.push('### Task');
   task.push(userTask);
 
-  if (context.history.length) {
+  if (context.history().length) {
     task.push('### Context history');
-    task.push(context.history.map(h => `- ${h.type}: ${h.description}`).join('\n'));
+    task.push(context.history().map(h => `- ${h.type}: ${h.description}`).join('\n'));
     task.push('');
   }
   task.push('### Page snapshot');
   task.push(full);
   task.push('');
-  await loop.run(task.join('\n'));
 
-  return { result: resultSchema ? reportedResult() : undefined };
+  const { error, usage } = await loop.run(task.join('\n'), { signal: progress.signal });
+  context.consumeTokens(usage.input + usage.output);
+  if (context.agentParams.apiCacheFile) {
+    const apiCacheAfter = { ...apiCacheBefore, ...loop.cache() };
+    const sortedCache = Object.fromEntries(Object.entries(apiCacheAfter).sort(([a], [b]) => a.localeCompare(b)));
+    const apiCacheTextAfter = JSON.stringify(sortedCache, undefined, 2);
+    if (apiCacheTextAfter !== apiCacheTextBefore) {
+      await fs.promises.mkdir(path.dirname(context.agentParams.apiCacheFile), { recursive: true });
+      await fs.promises.writeFile(context.agentParams.apiCacheFile, apiCacheTextAfter);
+    }
+  }
+
+  if (refusedToPerformReason())
+    throw new Error(`Agent refused to perform action: ${refusedToPerformReason()}`);
+
+  if (error)
+    throw new Error(`Agentic loop failed: ${error}`);
+
+  return { result: reportedResult ? reportedResult() : undefined };
 }
-
-type CachedActions = Record<string, {
-  timestamp: number,
-  actions: actions.ActionWithCode[],
-}>;
 
 async function cachedPerform(progress: Progress, context: Context, cacheKey: string): Promise<actions.ActionWithCode[] | undefined> {
   if (!context.agentParams?.cacheFile)
@@ -158,10 +180,7 @@ async function updateCache(context: Context, cacheKey: string) {
   const cacheFileKey = cacheFile ?? cacheOutFile;
 
   const cache = cacheFileKey ? await cachedActions(cacheFileKey) : { actions: {}, newActions: {} };
-  const newEntry = {
-    timestamp: Date.now(),
-    actions: context.actions,
-  };
+  const newEntry = { actions: context.actions() };
   cache.actions[cacheKey] = newEntry;
   cache.newActions[cacheKey] = newEntry;
 
@@ -177,8 +196,8 @@ async function updateCache(context: Context, cacheKey: string) {
 }
 
 type Cache = {
-  actions: CachedActions;
-  newActions: CachedActions;
+  actions: actions.CachedActions;
+  newActions: actions.CachedActions;
 };
 
 const allCaches = new Map<string, Cache>();
@@ -186,8 +205,11 @@ const allCaches = new Map<string, Cache>();
 async function cachedActions(cacheFile: string): Promise<Cache> {
   let cache = allCaches.get(cacheFile);
   if (!cache) {
-    const actions = await fs.promises.readFile(cacheFile, 'utf-8').then(text => JSON.parse(text)).catch(() => ({})) as CachedActions;
-    cache = { actions, newActions: {} };
+    const json = await fs.promises.readFile(cacheFile, 'utf-8').then(text => JSON.parse(text)).catch(() => ({}));
+    const parsed = actions.cachedActionsSchema.safeParse(json);
+    if (parsed.error)
+      throw new Error(`Failed to parse cache file ${cacheFile}:\n${zod.prettifyError(parsed.error)}`);
+    cache = { actions: parsed.data, newActions: {} };
     allCaches.set(cacheFile, cache);
   }
   return cache;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { asLocatorDescription, constructURLBasedOnBaseURL, isRegExp, isString, isTextualMimeType, pollAgainstDeadline, serializeExpectedTextValues, toKebabCase, formatMatcherMessage } from 'playwright-core/lib/utils';
+import { asLocatorDescription, constructURLBasedOnBaseURL, isRegExp, isString, isTextualMimeType, isURLPattern, pollAgainstDeadline, serializeExpectedTextValues, formatMatcherMessage } from 'playwright-core/lib/utils';
 import { colors } from 'playwright-core/lib/utils';
 
 import { expectTypes } from '../util';
@@ -32,8 +32,8 @@ import type { ExpectMatcherState } from '../../types/test';
 import type { TestStepInfoImpl } from '../worker/testInfo';
 import type { APIResponse, Locator, Frame, Page } from 'playwright-core';
 import type { FrameExpectParams } from 'playwright-core/lib/client/types';
-import type { CSSProperties, ExpectMatcherUtils } from '../../types/test';
-import type { InternalMatcherUtils } from 'playwright-core/lib/utils';
+import type { ExpectMatcherUtils } from '../../types/test';
+import type { InternalMatcherUtils, URLPattern } from 'playwright-core/lib/utils';
 
 export type ExpectMatcherStateInternal = Omit<ExpectMatcherState, 'utils'> & {
   _stepInfo?: TestStepInfoImpl;
@@ -313,40 +313,29 @@ export function toHaveCount(
   }, expected, options);
 }
 
+type ToHaveCSSOptions = { timeout?: number };
 export function toHaveCSS(this: ExpectMatcherStateInternal, locator: LocatorEx, name: string, expected: string | RegExp, options?: { timeout?: number }): Promise<MatcherResult<any, any>>;
-export function toHaveCSS(this: ExpectMatcherStateInternal, locator: LocatorEx, styles: CSSProperties, options?: { timeout?: number }): Promise<MatcherResult<any, any>>;
+export function toHaveCSS(this: ExpectMatcherStateInternal, locator: LocatorEx, styles: Record<string, string>, options?: { timeout?: number }): Promise<MatcherResult<any, any>>;
 export function toHaveCSS(
   this: ExpectMatcherStateInternal,
   locator: LocatorEx,
-  nameOrStyles: string | CSSProperties,
-  expectedOrOptions?: (string | RegExp) | { timeout?: number },
-  options?: { timeout?: number },
+  arg1: string | Record<string, string>,
+  arg2?: string | RegExp | ToHaveCSSOptions,
+  arg3?: ToHaveCSSOptions,
 ) {
-  if (typeof nameOrStyles === 'string') {
-    if (expectedOrOptions === undefined)
-      throw new Error(`toHaveCSS expected value must be provided`);
-    const propertyName = nameOrStyles as string;
-    const expected = expectedOrOptions as string | RegExp;
+  if (typeof arg1 === 'string') {
+    if (arg2 === undefined || !(isString(arg2) || isRegExp(arg2)))
+      throw new Error(`toHaveCSS expected value must be a string or a regular expression`);
     return toMatchText.call(this, 'toHaveCSS', locator, 'Locator', async (isNot, timeout) => {
-      const expectedText = serializeExpectedTextValues([expected]);
-      return await locator._expect('to.have.css', { expressionArg: propertyName, expectedText, isNot, timeout });
-    }, expected, options);
+      const expectedText = serializeExpectedTextValues([arg2]);
+      return await locator._expect('to.have.css', { expressionArg: arg1, expectedText, isNot, timeout });
+    }, arg2, arg3);
   } else {
-    const styles = nameOrStyles as CSSProperties;
-    const options = expectedOrOptions as { timeout?: number };
+    if (typeof arg1 !== 'object' || !arg1)
+      throw new Error(`toHaveCSS argument must be a string or an object`);
     return toEqual.call(this, 'toHaveCSS', locator, 'Locator', async (isNot, timeout) => {
-      const results: any[] = [];
-      for (const [name, value] of Object.entries(styles)) {
-        const propertyName = convertStylePropertyNameFromJsToCss(name);
-        const expected = value as string;
-        const expectedText = serializeExpectedTextValues([expected]);
-        const result = await locator._expect('to.have.css', { expressionArg: propertyName, expectedText, isNot, timeout });
-        results.push(result);
-        if (!result.matches)
-          return result;
-      }
-      return { matches: true };
-    }, styles, options);
+      return await locator._expect('to.have.css.object', { isNot, expectedValue: arg1, timeout });
+    }, arg1, arg2 as (ToHaveCSSOptions | undefined));
   }
 }
 
@@ -446,9 +435,12 @@ export function toHaveTitle(
 export function toHaveURL(
   this: ExpectMatcherStateInternal,
   page: Page,
-  expected: string | RegExp | ((url: URL) => boolean),
+  expected: string | RegExp | URLPattern | ((url: URL) => boolean),
   options?: { ignoreCase?: boolean; timeout?: number },
 ) {
+  if (isURLPattern(expected))
+    return toHaveURLWithPredicate.call(this, page, url => (expected as URLPattern).test(url.href), options);
+
   // Ports don't support predicates. Keep separate server and client codepaths
   if (typeof expected === 'function')
     return toHaveURLWithPredicate.call(this, page, expected, options);
@@ -536,12 +528,4 @@ export function computeMatcherTitleSuffix(matcherName: string, receiver: any, ar
     }
   }
   return {};
-}
-
-function convertStylePropertyNameFromJsToCss(name: string): string {
-  const vendorMatch = name.match(/^(Webkit|Moz|Ms|O)([A-Z].*)/);
-  if (vendorMatch)
-    return `-${toKebabCase(name)}`;
-
-  return toKebabCase(name);
 }

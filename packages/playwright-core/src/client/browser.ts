@@ -35,7 +35,9 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   _shouldCloseConnectionOnClose = false;
   _browserType!: BrowserType;
   _options: LaunchOptions = {};
+  _userDataDir: string | undefined;
   readonly _name: string;
+  readonly _browserName: 'chromium' | 'webkit' | 'firefox';
   private _path: string | undefined;
   _closeReason: string | undefined;
 
@@ -46,6 +48,7 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.BrowserInitializer) {
     super(parent, type, guid, initializer);
     this._name = initializer.name;
+    this._browserName = initializer.browserName;
     this._channel.on('context', ({ context }) => this._didCreateContext(BrowserContext.from(context)));
     this._channel.on('close', () => this._didClose());
     this._closedPromise = new Promise(f => this.once(Events.Browser.Disconnected, f));
@@ -89,12 +92,13 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
     return context;
   }
 
-  _connectToBrowserType(browserType: BrowserType, browserOptions: LaunchOptions, logger: Logger | undefined) {
+  _connectToBrowserType(browserType: BrowserType, browserOptions: LaunchOptions, logger: Logger | undefined, userDataDir?: string) {
     // Note: when using connect(), `browserType` is different from `this._parent`.
     // This is why browser type is not wired up in the constructor,
     // and instead this separate method is called later on.
     this._browserType = browserType;
     this._options = browserOptions;
+    this._userDataDir = userDataDir;
     this._logger = logger;
     for (const context of this._contexts)
       this._setupBrowserContext(context);
@@ -124,6 +128,14 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
 
   version(): string {
     return this._initializer.version;
+  }
+
+  async _startServer(title: string, options: { wsPath?: string, workspaceDir?: string } = {}): Promise<{ wsEndpoint?: string, pipeName?: string }> {
+    return await this._channel.startServer({ title, ...options });
+  }
+
+  async _stopServer(): Promise<void> {
+    await this._channel.stopServer();
   }
 
   async newPage(options: BrowserContextOptions = {}): Promise<Page> {

@@ -9,6 +9,9 @@ on:
     paths-ignore:
       - 'browser_patches/**'
       - 'docs/**'
+      - 'packages/playwright-core/src/cli/client/**'
+      - 'packages/playwright-core/src/cli/daemon/**'
+      - 'packages/playwright-core/src/mcp/**'
       - 'packages/playwright/src/mcp/**'
       - 'tests/mcp/**'
     branches:
@@ -42,6 +45,9 @@ jobs:
             browser: chromium
           - os: ubuntu-22.04
             node-version: 24
+            browser: chromium
+          - os: ubuntu-22.04-arm
+            node-version: 20
             browser: chromium
     runs-on: ${{ matrix.os }}
     permissions:
@@ -139,7 +145,7 @@ jobs:
     - uses: ./.github/actions/run-test
       with:
         node-version: ${{matrix.node-version}}
-        command: npm run ttest -- --shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --shard-weights=${{ matrix.shardWeights }}
+        command: npm run ttest -- --shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
         bot-name: "${{ matrix.os }}-node${{ matrix.node-version }}"
         shard-index: ${{ matrix.shardIndex }}
         flakiness-client-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_CLIENT_ID }}
@@ -147,6 +153,7 @@ jobs:
         flakiness-subscription-id: ${{ secrets.AZURE_FLAKINESS_DASHBOARD_SUBSCRIPTION_ID }}
       env:
         PWTEST_CHANNEL: firefox-beta
+        PWTEST_SHARD_WEIGHTS: ${{ matrix.shardWeights }}
 
   test_vscode_extension:
     name: VSCode Extension
@@ -178,7 +185,7 @@ jobs:
       env:
         PW_TAG: "@vscode-extension"
     - name: Upload blob report
-      if: ${{ !cancelled() }}
+      if: ${{ !cancelled() && (github.event_name == 'pull_request' || failure()) }}
       uses: ./.github/actions/upload-blob-report
       with:
         report_dir: playwright-vscode/blob-report

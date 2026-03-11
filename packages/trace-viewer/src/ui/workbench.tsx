@@ -86,8 +86,9 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
   const [revealedErrorKey, setRevealedErrorKey] = usePartitionedState<string | undefined>('revealedErrorKey');
   const [highlightedConsoleMessageOrdinal, setHighlightedConsoleMessageOrdinal] = usePartitionedState<number | undefined>('highlightedConsoleMessageOrdinal');
   const [revealedAttachmentCallId, setRevealedAttachmentCallId] = usePartitionedState<{ callId: string } | undefined>('revealedAttachmentCallId');
-  const [highlightedResourceOrdinal, setHighlightedResourceOrdinal] = usePartitionedState<number | undefined>('highlightedResourceOrdinal');
+  const [highlightedResourceKey, setHighlightedResourceKey] = usePartitionedState<string | undefined>('highlightedResourceKey');
   const [treeState, setTreeState] = usePartitionedState<TreeState>('treeState', { expandedItems: new Map() });
+  const [actionFilterText, setActionFilterText] = React.useState('');
 
   togglePartition(partition);
 
@@ -258,7 +259,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
     id: 'network',
     title: 'Network',
     count: networkModel.resources.length,
-    render: () => <NetworkTab boundaries={boundaries} networkModel={networkModel} onResourceHovered={setHighlightedResourceOrdinal} sdkLanguage={model?.sdkLanguage ?? 'javascript'} />
+    render: () => <NetworkTab boundaries={boundaries} networkModel={networkModel} onResourceHovered={setHighlightedResourceKey} sdkLanguage={model?.sdkLanguage ?? 'javascript'} />
   };
   const attachmentsTab: TabbedPaneTabModel = {
     id: 'attachments',
@@ -315,12 +316,22 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
     id: 'actions',
     title: 'Actions',
     component: <div className='vbox'>
-      {status && <div className='workbench-run-status'>
+      {status && <div className='workbench-run-status' data-testid='workbench-run-status'>
         <span className={clsx('codicon', testStatusIcon(status))}></span>
         <div>{testStatusText(status)}</div>
         <div className='spacer'></div>
         <div className='workbench-run-duration'>{time ? msToString(time) : ''}</div>
       </div>}
+      <div className='workbench-action-filter'>
+        <input
+          type='search'
+          placeholder='Filter actions'
+          aria-label='Filter actions'
+          spellCheck={false}
+          value={actionFilterText}
+          onChange={e => setActionFilterText(e.target.value)}
+        />
+      </div>
       <ActionList
         sdkLanguage={sdkLanguage}
         actions={actions || []}
@@ -334,6 +345,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
         revealActionAttachment={revealActionAttachment}
         revealConsole={() => selectPropertiesTab('console')}
         isLive={isLive}
+        actionFilterText={actionFilterText}
       />
     </div>
   };
@@ -352,7 +364,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
       networkResources={networkModel.resources}
       boundaries={boundaries}
       highlightedAction={highlightedAction}
-      highlightedResourceOrdinal={highlightedResourceOrdinal}
+      highlightedResourceKey={highlightedResourceKey}
       highlightedConsoleEntryOrdinal={highlightedConsoleMessageOrdinal}
       onSelected={onActionSelected}
       sdkLanguage={sdkLanguage}

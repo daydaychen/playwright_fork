@@ -246,7 +246,7 @@ export class CRPage implements PageDelegate {
   }
 
   async takeScreenshot(progress: Progress, format: 'png' | 'jpeg', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
-    const { visualViewport } = await progress.race(this._mainFrameSession._client.send('Page.getLayoutMetrics'));
+    const { visualViewport, contentSize, cssContentSize } = await progress.race(this._mainFrameSession._client.send('Page.getLayoutMetrics'));
     if (!documentRect) {
       documentRect = {
         x: visualViewport.pageX + viewportRect!.x,
@@ -261,7 +261,9 @@ export class CRPage implements PageDelegate {
     // ignore current page scale.
     const clip = { ...documentRect, scale: viewportRect ? visualViewport.scale : 1 };
     if (scale === 'css') {
-      const deviceScaleFactor = this._browserContext._options.deviceScaleFactor || 1;
+      // deviceScaleFactor override does not affect layout metrics, so if it is set,
+      // we use its value rather than computed one.
+      const deviceScaleFactor =  this._mainFrameSession._metricsOverride?.deviceScaleFactor || contentSize.width / cssContentSize.width || 1;
       clip.scale /= deviceScaleFactor;
     }
     const result = await progress.race(this._mainFrameSession._client.send('Page.captureScreenshot', { format, quality, clip, captureBeyondViewport: !fitsViewport }));
@@ -356,6 +358,10 @@ export class CRPage implements PageDelegate {
   shouldToggleStyleSheetToSyncAnimations(): boolean {
     return false;
   }
+
+  async setDockTile(image: Buffer): Promise<void> {
+    await this._mainFrameSession._client.send('Browser.setDockTile', { image: image.toString('base64') });
+  }
 }
 
 class FrameSession {
@@ -374,7 +380,7 @@ class FrameSession {
   // Marks the oopif session that remote -> local transition has happened in the parent.
   // See Target.detachedFromTarget handler for details.
   private _swappedIn = false;
-  private _metricsOverride: Protocol.Emulation.setDeviceMetricsOverrideParameters | undefined;
+  _metricsOverride: Protocol.Emulation.setDeviceMetricsOverrideParameters | undefined;
   private _workerSessions = new Map<string, CRSession>();
   private _initScriptIds = new Map<InitScript, string>();
   private _bufferedAttachedToTargetEvents: Protocol.Target.attachedToTargetPayload[] | undefined;
@@ -438,8 +444,8 @@ class FrameSession {
     }
 
     let videoOptions: types.VideoOptions | undefined;
-    if (!this._page.isStorageStatePage && this._isMainFrame() && hasUIWindow)
-      videoOptions = this._crPage._page.screencast.launchVideoRecorder();
+    if (this._isMainFrame() && hasUIWindow && !this._page.isStorageStatePage)
+      videoOptions = this._crPage._page.screencast.launchAutomaticVideoRecorder();
 
     let lifecycleEventsEnabled: Promise<any>;
     if (!this._isMainFrame())
@@ -736,7 +742,7 @@ class FrameSession {
     session.on('Target.detachedFromTarget', event => this._onDetachedFromTarget(event));
     session.on('Runtime.consoleAPICalled', event => {
       const args = event.args.map(o => createHandle(worker.existingExecutionContext!, o));
-      this._page.addConsoleMessage(worker, event.type, args, toConsoleMessageLocation(event.stackTrace));
+      this._page.addConsoleMessage(worker, event.type, args, toConsoleMessageLocation(event.stackTrace), undefined, event.timestamp);
     });
     session.on('Runtime.exceptionThrown', exception => this._page.addPageError(exceptionToError(exception.exceptionDetails)));
   }
@@ -799,7 +805,7 @@ class FrameSession {
     if (!context)
       return;
     const values = event.args.map(arg => createHandle(context, arg));
-    this._page.addConsoleMessage(null, event.type, values, toConsoleMessageLocation(event.stackTrace));
+    this._page.addConsoleMessage(null, event.type, values, toConsoleMessageLocation(event.stackTrace), undefined, event.timestamp);
   }
 
   async _onBindingCalled(event: Protocol.Runtime.bindingCalledPayload) {
@@ -846,7 +852,7 @@ class FrameSession {
         lineNumber: lineNumber || 0,
         columnNumber: 0,
       };
-      this._page.addConsoleMessage(null, level, [], location, text);
+      this._page.addConsoleMessage(null, level, [], location, text, event.entry.timestamp);
     }
   }
 
@@ -880,11 +886,11 @@ class FrameSession {
       this._client._sendMayFail('Page.screencastFrameAck', { sessionId: payload.sessionId });
     });
     const buffer = Buffer.from(payload.data, 'base64');
-    this._page.emit(Page.Events.ScreencastFrame, {
+    this._page.screencast.onScreencastFrame({
       buffer,
       frameSwapWallTime: payload.metadata.timestamp ? payload.metadata.timestamp * 1000 : Date.now(),
-      width: payload.metadata.deviceWidth,
-      height: payload.metadata.deviceHeight,
+      viewportWidth: payload.metadata.deviceWidth,
+      viewportHeight: payload.metadata.deviceHeight,
     });
   }
 

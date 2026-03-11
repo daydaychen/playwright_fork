@@ -3122,6 +3122,43 @@ for (const useIntermediateMergeReport of [true, false] as const) {
       await expect(page.getByTestId('test-snippet')).not.toBeVisible();
     });
 
+    test('worker test list', async ({ runInlineTest, showReport, page }) => {
+      const result = await runInlineTest({
+        'playwright.config.ts': `
+          export default { reporter: [['html']], retries: 1 }
+        `,
+        'example.spec.ts': `
+          import { test, expect } from '@playwright/test';
+          test('success1', () => {});
+          test('flaky1', () => {
+            expect(test.info().retry).toBe(1);
+          });
+          test('success2', () => {});
+        `,
+      }, { reporter: 'html', workers: '1' }, { PLAYWRIGHT_HTML_OPEN: 'never' });
+      expect(result.exitCode).toBe(0);
+      await showReport();
+
+      await page.getByRole('link', { name: 'flaky1', exact: true }).click();
+
+      await page.getByRole('button', { name: 'Executed in Worker #0' }).click();
+      await expect(page.getByTestId('worker-test-list')).toMatchAriaSnapshot(`
+        - 'button "Executed in Worker #0" [expanded]'
+        - region:
+          - list:
+            - listitem:
+              - link "success1"
+              - link "example.spec.ts:3"
+            - listitem:
+              - link "flaky1"
+              - link "example.spec.ts:4"
+      `);
+      await expect(page.getByRole('listitem').filter({ hasText: 'flaky1' })).toHaveAttribute('aria-current', 'true');
+
+      await page.getByRole('link', { name: 'success1', exact: true }).click();
+      await expect(page.locator('.test-case-location')).toHaveText('example.spec.ts:3');
+    });
+
     test('should support keyboard shortcuts', async ({ runInlineTest, showReport, page }) => {
       await runInlineTest({
         'playwright.config.ts': `
@@ -3243,18 +3280,25 @@ for (const useIntermediateMergeReport of [true, false] as const) {
         await expect(page.getByRole('main')).toMatchAriaSnapshot(`
           - button "Slowest Tests"
           - region:
-            - link "three"
-            - text: /foo/
-            - link "two"
-            - text: /foo/
-            - link "one"
-            - text: /foo/
-            - link "three"
-            - text: /bar/
-            - link "two"
-            - text: /bar/
-            - link "one"
-            - text: /bar/
+            - list:
+              - listitem:
+                - link "three"
+                - text: /foo/
+              - listitem:
+                - link "two"
+                - text: /foo/
+              - listitem:
+                - link "one"
+                - text: /foo/
+              - listitem:
+                - link "three"
+                - text: /bar/
+              - listitem:
+                - link "two"
+                - text: /bar/
+              - listitem:
+                - link "one"
+                - text: /bar/
         `);
         await page.getByText('foo').first().click();
         await expect(page.getByRole('main')).toMatchAriaSnapshot(`
@@ -3306,60 +3350,6 @@ for (const useIntermediateMergeReport of [true, false] as const) {
         await expect(page.getByRole('link', { name: 'previous' })).not.toBeVisible();
       });
     });
-
-
-    test('shard chart', async ({ runInlineTest, writeFiles, showReport, page }) => {
-      test.skip(!useIntermediateMergeReport);
-
-      await writeFiles({
-        'playwright.config.ts': `
-          module.exports = {
-            fullyParallel: true,
-            tag: process.env.BOT_TAG,
-          };
-        `,
-        'a.test.js': `
-          import { test, expect } from '@playwright/test';
-          import timers from 'timers/promises';
-          test('one', async () => {
-            await timers.setTimeout(100);
-          });
-          test('two', async () => {
-            await timers.setTimeout(200);
-          });
-          test('three', async () => {
-            await timers.setTimeout(300);
-          });
-        `,
-      });
-
-      await runInlineTest({}, { reporter: 'dot,html', shard: '1/3',  }, { PLAYWRIGHT_HTML_OPEN: 'never', PWTEST_BLOB_DO_NOT_REMOVE: '1', BOT_TAG: '@linux' });
-      await runInlineTest({}, { reporter: 'dot,html', shard: '2/3',  }, { PLAYWRIGHT_HTML_OPEN: 'never', PWTEST_BLOB_DO_NOT_REMOVE: '1', BOT_TAG: '@linux' });
-      await runInlineTest({}, { reporter: 'dot,html', shard: '3/3',  }, { PLAYWRIGHT_HTML_OPEN: 'never', PWTEST_BLOB_DO_NOT_REMOVE: '1', BOT_TAG: '@linux' });
-
-      await runInlineTest({}, { reporter: 'dot,html', shard: '1/2',  }, { PLAYWRIGHT_HTML_OPEN: 'never', PWTEST_BLOB_DO_NOT_REMOVE: '1', BOT_TAG: '@mac' });
-      await runInlineTest({}, { reporter: 'dot,html', shard: '2/2',  }, { PLAYWRIGHT_HTML_OPEN: 'never', PWTEST_BLOB_DO_NOT_REMOVE: '1', BOT_TAG: '@mac' });
-
-      await showReport();
-      await page.getByRole('link', { name: 'Speedboard' }).click();
-
-      await expect(page.getByRole('main')).toMatchAriaSnapshot(`
-        - button "Shard Duration"
-        - region:
-          - img:
-            - list "@linux":
-              - listitem /Shard 1/
-              - listitem /Shard 2/
-              - listitem /Shard 3/
-            - list "@mac":
-              - listitem /Shard 1/
-              - listitem /Shard 2/
-          - text: Use shard weights to
-          - link "rebalance your shards":
-            - /url: https://playwright.dev/docs/test-sharding#rebalancing-shards
-          - text: /@linux. npx playwright test --shard-weights=\\d+:\\d+:\\d+ @mac. npx playwright test --shard-weights=\\d+:\\d+/
-      `);
-    });
   });
 }
 
@@ -3388,14 +3378,19 @@ test('should support merge files option', async ({ runInlineTest, showReport, pa
   await expect(page.locator('body')).toMatchAriaSnapshot(`
     - button "<anonymous>" [expanded]
     - region:
-      - link "test 2"
-      - link "a.test.js:6"
+      - list:
+        - listitem:
+          - link "test 2"
+          - link "a.test.js:6"
     - button "describe" [expanded]
     - region:
-      - link "test 1"
-      - link "a.test.js:4"
-      - link "test 3"
-      - link "b.test.js:4"
+      - list:
+        - listitem:
+          - link "test 1"
+          - link "a.test.js:4"
+        - listitem:
+          - link "test 3"
+          - link "b.test.js:4"
   `);
 });
 

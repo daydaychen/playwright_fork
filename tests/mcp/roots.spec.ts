@@ -16,7 +16,6 @@
 
 import crypto from 'crypto';
 import fs from 'fs';
-import path from 'path';
 import { pathToFileURL } from 'url';
 
 import { test, expect } from './fixtures';
@@ -42,30 +41,6 @@ test('should use separate user data by root path', async ({ startClient, server 
   const hash = createHash(p);
   const [file] = await fs.promises.readdir(testInfo.outputPath('ms-playwright'));
   expect(file).toContain(hash);
-});
-
-test('check that trace is saved in workspace', async ({ startClient, server }, testInfo) => {
-  const rootPath = testInfo.outputPath('workspace');
-  const { client } = await startClient({
-    args: ['--save-trace'],
-    clientName: 'My client',
-    roots: [
-      {
-        name: 'workspace',
-        uri: pathToFileURL(rootPath).toString(),
-      },
-    ],
-  });
-
-  expect(await client.callTool({
-    name: 'browser_navigate',
-    arguments: { url: server.HELLO_WORLD },
-  })).toHaveResponse({
-    code: expect.stringContaining(`page.goto('http://localhost`),
-  });
-
-  const [file] = await fs.promises.readdir(path.join(rootPath, '.playwright-mcp'));
-  expect(file).toContain('traces');
 });
 
 test('should list all tools when listRoots is slow', async ({ startClient }) => {
@@ -126,3 +101,30 @@ test('should tolerate WSL client roots on Windows server', async ({ startClient,
 function createHash(data: string): string {
   return crypto.createHash('sha256').update(data).digest('hex').slice(0, 7);
 }
+
+test('should return relative paths when root is specified', async ({ startClient, server }, testInfo) => {
+  const rootPath = testInfo.outputPath('workspace');
+  await fs.promises.mkdir(rootPath, { recursive: true });
+
+  const { client } = await startClient({
+    clientName: 'test-client',
+    roots: [
+      {
+        name: 'workspace',
+        uri: pathToFileURL(rootPath).toString(),
+      },
+    ],
+  });
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.HELLO_WORLD },
+  });
+
+  expect(await client.callTool({
+    name: 'browser_take_screenshot',
+    arguments: { filename: 'screenshot.png' },
+  })).toHaveResponse({
+    result: expect.stringContaining(`[Screenshot of viewport](screenshot.png)`),
+  });
+});

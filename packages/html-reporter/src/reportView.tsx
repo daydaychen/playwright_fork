@@ -52,6 +52,7 @@ export const ReportView: React.FC<{
   const [expandedFiles, setExpandedFiles] = React.useState<Map<string, boolean>>(new Map());
   const [filterText, setFilterText] = React.useState(searchParams.get('q') || '');
   const [metadataVisible, setMetadataVisible] = React.useState(false);
+  const [errorsVisible, setErrorsVisible] = React.useState(true);
   const speedboard = searchParams.has('speedboard');
   const [mergeFiles] = useSetting('mergeFiles', false);
   const testId = searchParams.get('testId');
@@ -90,6 +91,7 @@ export const ReportView: React.FC<{
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
         return;
 
+      const params = new URLSearchParams(searchParams);
       switch (event.key) {
         case 'a':
           event.preventDefault();
@@ -97,28 +99,28 @@ export const ReportView: React.FC<{
           break;
         case 'p':
           event.preventDefault();
-          searchParams.delete('testId');
-          searchParams.delete('speedboard');
-          navigate(filterWithQuery(searchParams, 's:passed', false));
+          params.delete('testId');
+          params.delete('speedboard');
+          navigate(filterWithQuery(params, 's:passed', false));
           break;
         case 'f':
           event.preventDefault();
-          searchParams.delete('testId');
-          searchParams.delete('speedboard');
-          navigate(filterWithQuery(searchParams, 's:failed', false));
+          params.delete('testId');
+          params.delete('speedboard');
+          navigate(filterWithQuery(params, 's:failed', false));
           break;
         case 'ArrowLeft':
           if (prev) {
             event.preventDefault();
-            searchParams.delete('testId');
-            navigate(testResultHref({ test: prev }, searchParams) + filterParam);
+            params.delete('testId');
+            navigate(testResultHref({ test: prev }, params) + filterParam);
           }
           break;
         case 'ArrowRight':
           if (next) {
             event.preventDefault();
-            searchParams.delete('testId');
-            navigate(testResultHref({ test: next }, searchParams) + filterParam);
+            params.delete('testId');
+            navigate(testResultHref({ test: next }, params) + filterParam);
           }
           break;
       }
@@ -139,7 +141,13 @@ export const ReportView: React.FC<{
     <main>
       {report && <GlobalFilterView stats={report.json().stats} filterText={filterText} setFilterText={setFilterText} />}
       <Route predicate={testFilesRoutePredicate}>
-        <TestFilesHeader report={report?.json()} filteredStats={filteredStats} metadataVisible={metadataVisible} toggleMetadataVisible={() => setMetadataVisible(visible => !visible)}/>
+        <TestFilesHeader
+          report={report?.json()}
+          filteredStats={filteredStats}
+          metadataVisible={metadataVisible}
+          toggleMetadataVisible={() => setMetadataVisible(visible => !visible)}
+          errorsVisible={errorsVisible}
+          setErrorsVisible={setErrorsVisible}/>
         <TestFilesView
           files={testModel.files}
           expandedFiles={expandedFiles}
@@ -148,7 +156,13 @@ export const ReportView: React.FC<{
         />
       </Route>
       <Route predicate={speedboardRoutePredicate}>
-        <TestFilesHeader report={report?.json()} filteredStats={filteredStats} metadataVisible={metadataVisible} toggleMetadataVisible={() => setMetadataVisible(visible => !visible)}/>
+        <TestFilesHeader
+          report={report?.json()}
+          filteredStats={filteredStats}
+          metadataVisible={metadataVisible}
+          toggleMetadataVisible={() => setMetadataVisible(visible => !visible)}
+          errorsVisible={errorsVisible}
+          setErrorsVisible={setErrorsVisible}/>
         {report && <Speedboard report={report} tests={testModel.tests} />}
       </Route>
       <Route predicate={testCaseRoutePredicate}>
@@ -165,9 +179,8 @@ const TestCaseViewLoader: React.FC<{
   prev?: TestCaseSummary,
   testIdToFileIdMap: Map<string, string>,
 }> = ({ report, testIdToFileIdMap, next, prev, testId }) => {
-  const searchParams = useSearchParams();
   const [test, setTest] = React.useState<TestCase | 'loading' | 'not-found'>('loading');
-  const run = +(searchParams.get('run') || '0');
+  const run = +(useSearchParams().get('run') || '0');
 
   React.useEffect(() => {
     (async () => {
@@ -193,12 +206,9 @@ const TestCaseViewLoader: React.FC<{
     </div>;
   }
 
-  const { projectNames, metadata, options } = report.json();
   return <div className='test-case-column'>
     <TestCaseView
-      projectNames={projectNames}
-      testRunMetadata={metadata}
-      options={options}
+      report={report}
       next={next}
       prev={prev}
       test={test}

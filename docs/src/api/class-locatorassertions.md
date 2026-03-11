@@ -70,7 +70,11 @@ public class ExampleTests : PageTest
 * langs: java, js, csharp
 - returns: <[LocatorAssertions]>
 
-Makes the assertion check for the opposite condition. For example, this code tests that the Locator doesn't contain text `"error"`:
+Makes the assertion check for the opposite condition.
+
+**Usage**
+
+For example, this code tests that the Locator doesn't contain text `"error"`:
 
 ```js
 await expect(locator).not.toContainText('error');
@@ -1216,7 +1220,7 @@ await expect(page.locator('ul')).toContainText(['Text 3']);
 
 ```java
 // ✓ Contains the right items in the right order
-assertThat(page.locator("ul > li")).containsText(new String[] {"Text 1", "Text 3", "Text 4"});
+assertThat(page.locator("ul > li")).containsText(new String[] {"Text 1", "Text 3"});
 
 // ✖ Wrong order
 assertThat(page.locator("ul > li")).containsText(new String[] {"Text 3", "Text 2"});
@@ -1232,7 +1236,7 @@ assertThat(page.locator("ul")).containsText(new String[] {"Text 3"});
 from playwright.async_api import expect
 
 # ✓ Contains the right items in the right order
-await expect(page.locator("ul > li")).to_contain_text(["Text 1", "Text 3", "Text 4"])
+await expect(page.locator("ul > li")).to_contain_text(["Text 1", "Text 3"])
 
 # ✖ Wrong order
 await expect(page.locator("ul > li")).to_contain_text(["Text 3", "Text 2"])
@@ -1248,7 +1252,7 @@ await expect(page.locator("ul")).to_contain_text(["Text 3"])
 from playwright.sync_api import expect
 
 # ✓ Contains the right items in the right order
-expect(page.locator("ul > li")).to_contain_text(["Text 1", "Text 3", "Text 4"])
+expect(page.locator("ul > li")).to_contain_text(["Text 1", "Text 3"])
 
 # ✖ Wrong order
 expect(page.locator("ul > li")).to_contain_text(["Text 3", "Text 2"])
@@ -1262,7 +1266,7 @@ expect(page.locator("ul")).to_contain_text(["Text 3"])
 
 ```csharp
 // ✓ Contains the right items in the right order
-await Expect(Page.Locator("ul > li")).ToContainTextAsync(new string[] {"Text 1", "Text 3", "Text 4"});
+await Expect(Page.Locator("ul > li")).ToContainTextAsync(new string[] {"Text 1", "Text 3"});
 
 // ✖ Wrong order
 await Expect(Page.Locator("ul > li")).ToContainTextAsync(new string[] {"Text 3", "Text 2"});
@@ -1749,15 +1753,12 @@ CSS property value.
 ### option: LocatorAssertions.toHaveCSS#1.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.18
 
+
 ## async method: LocatorAssertions.toHaveCSS#2
 * since: v1.58
 * langs: js
 
-Ensures the [Locator] resolves to an element with the given computed CSS properties.
-
-:::note
-The `CSSProperties` object parameter for toHaveCSS requires `react` to be installed for type checking.
-:::
+Ensures the [Locator] resolves to an element with the given computed CSS properties. Only the listed properties are checked.
 
 **Usage**
 
@@ -1771,12 +1772,13 @@ await expect(locator).toHaveCSS({
 
 ### param: LocatorAssertions.toHaveCSS#2.styles
 * since: v1.58
-- `styles` <[CSSProperties]>
+- `styles` <[Object]>
 
-CSS properties object.
+CSS properties object. See [CSSStyleProperties](https://developer.mozilla.org/en-US/docs/Web/API/CSSStyleProperties) for available properties.
 
 ### option: LocatorAssertions.toHaveCSS#2.timeout = %%-js-assertions-timeout-%%
 * since: v1.58
+
 
 ## async method: LocatorAssertions.toHaveId
 * since: v1.20

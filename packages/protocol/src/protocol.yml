@@ -161,6 +161,17 @@ SelectorEngine:
     source: string
     contentScript: boolean?
 
+URLPattern:
+  type: object
+  properties:
+    hash: string
+    hostname: string
+    password: string
+    pathname: string
+    port: string
+    protocol: string
+    search: string
+    username: string
 
 SetNetworkCookie:
   type: object
@@ -376,6 +387,7 @@ APIRequestContext:
 
     storageState:
       title: Get storage state
+      group: configuration
       parameters:
         indexedDB: boolean?
       returns:
@@ -476,6 +488,7 @@ LaunchOptions:
         password: string?
     downloadsPath: string?
     tracesDir: string?
+    artifactsDir: string?
     chromiumSandbox: boolean?
     firefoxUserPrefs: json?
     cdpPort: int?
@@ -640,6 +653,9 @@ LocalUtils:
             - write
             - append
         includeSources: boolean
+        additionalSources:
+          type: array?
+          items: string
 
     harOpen:
       internal: true
@@ -690,7 +706,7 @@ LocalUtils:
     connect:
       internal: true
       parameters:
-        wsEndpoint: string
+        endpoint: string
         headers: json?
         exposeNetwork: string?
         slowMo: float?
@@ -994,14 +1010,41 @@ BrowserType:
         browser: Browser
         defaultContext: BrowserContext?
 
+    connectOverCDPTransport:
+      title: Connect over CDP transport
+      parameters:
+        transport: binary
+      returns:
+        browser: Browser
+        defaultContext: BrowserContext?
+
 Browser:
   type: interface
 
   initializer:
     version: string
     name: string
+    browserName:
+      type: enum
+      literals:
+        - chromium
+        - firefox
+        - webkit
 
   commands:
+
+    startServer:
+      title: Start server
+      parameters:
+        title: string
+        wsPath: string?
+        workspaceDir: string?
+      returns:
+        wsEndpoint: string?
+        pipeName: string?
+
+    stopServer:
+      title: Stop server
 
     close:
       title: Close browser
@@ -1113,6 +1156,7 @@ ConsoleMessage:
         url: string
         lineNumber: int
         columnNumber: int
+    timestamp: float
 
 
 EventTarget:
@@ -1144,7 +1188,6 @@ BrowserContext:
   extends: EventTarget
 
   initializer:
-    isChromium: boolean
     requestContext: APIRequestContext
     tracing: Tracing
     options:
@@ -1167,6 +1210,8 @@ BrowserContext:
       group: configuration
       parameters:
         source: string
+      returns:
+        disposable: Disposable
 
     clearCookies:
       title: Clear cookies
@@ -1211,6 +1256,8 @@ BrowserContext:
       parameters:
         name: string
         needsHandle: boolean?
+      returns:
+        disposable: Disposable
 
     grantPermissions:
       title: Grant permissions
@@ -1278,6 +1325,7 @@ BrowserContext:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setWebSocketInterceptionPatterns:
       title: Route WebSockets
@@ -1291,6 +1339,7 @@ BrowserContext:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setOffline:
       title: Set offline mode
@@ -1299,6 +1348,7 @@ BrowserContext:
 
     storageState:
       title: Get storage state
+      group: configuration
       parameters:
         indexedDB: boolean?
       returns:
@@ -1308,6 +1358,20 @@ BrowserContext:
         origins:
           type: array
           items: OriginStorage
+
+    setStorageState:
+      title: Set storage state
+      group: configuration
+      parameters:
+        storageState:
+          type: object?
+          properties:
+            cookies:
+              type: array?
+              items: SetNetworkCookie
+            origins:
+              type: array?
+              items: SetOriginStorage
 
     pause:
       title: Pause
@@ -1471,10 +1535,6 @@ BrowserContext:
       parameters:
         webSocketRoute: WebSocketRoute
 
-    video:
-      parameters:
-        artifact: Artifact
-
     serviceWorker:
       parameters:
         worker: Worker
@@ -1529,6 +1589,7 @@ Page:
         height: int
     isClosed: boolean
     opener: Page?
+    video: Artifact?
 
   commands:
 
@@ -1537,6 +1598,8 @@ Page:
       group: configuration
       parameters:
         source: string
+      returns:
+        disposable: Disposable
 
     close:
       title: Close page
@@ -1545,6 +1608,9 @@ Page:
         reason: string?
       flags:
         pausesBeforeAction: true
+
+    clearConsoleMessages:
+      title: Clear console messages
 
     consoleMessages:
       title: Get console messages
@@ -1601,6 +1667,8 @@ Page:
       parameters:
         name: string
         needsHandle: boolean?
+      returns:
+        disposable: Disposable
 
     goBack:
       title: Go back
@@ -1731,6 +1799,7 @@ Page:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setWebSocketInterceptionPatterns:
       title: Route WebSockets
@@ -1744,6 +1813,7 @@ Page:
               glob: string?
               regexSource: string?
               regexFlags: string?
+              urlPattern: URLPattern?
 
     setViewportSize:
       title: Set viewport size
@@ -1883,6 +1953,9 @@ Page:
         snapshot: true
         pausesBeforeAction: true
 
+    clearPageErrors:
+      title: Clear page errors
+
     pageErrors:
       title: Get page errors
       group: getter
@@ -1998,6 +2071,46 @@ Page:
     bringToFront:
       title: Bring to front
 
+    pickLocator:
+      title: Pick locator
+      group: configuration
+      returns:
+        selector: string
+
+    cancelPickLocator:
+      title: Cancel pick locator
+      group: configuration
+
+    startScreencast:
+      title: Start screencast
+      group: configuration
+      parameters:
+        maxSize:
+          type: object?
+          properties:
+            width: int
+            height: int
+
+    stopScreencast:
+      title: Stop screencast
+      group: configuration
+
+    videoStart:
+      title: Start video recording
+      group: configuration
+      parameters:
+        size:
+          type: object?
+          properties:
+            width: int
+            height: int
+      returns:
+        artifact: Artifact
+
+    videoStop:
+      title: Stop video recording
+      group: configuration
+
     updateSubscription:
       internal: true
       parameters:
@@ -2023,6 +2136,7 @@ Page:
         apiCacheFile: string?
         cacheFile: string?
         cacheOutFile: string?
+        doNotRenderActive: boolean?
         maxActions: int?
         maxActionRetries: int?
         maxTokens: int?
@@ -2033,6 +2147,11 @@ Page:
         systemPrompt: string?
       returns:
         agent: PageAgent
+
+    setDockTile:
+      internal: true
+      parameters:
+        image: binary
 
   events:
 
@@ -2079,13 +2198,13 @@ Page:
       parameters:
         route: Route
 
+    screencastFrame:
+      parameters:
+        data: binary
+
     webSocketRoute:
       parameters:
         webSocketRoute: WebSocketRoute
-
-    video:
-      parameters:
-        artifact: Artifact
 
     webSocket:
       parameters:
@@ -2763,7 +2882,7 @@ Frame:
       parameters:
         selector: string?
         expression: string
-        expressionArg: json?
+        expressionArg: string?
         expectedText:
           type: array?
           items: ExpectedTextValue
@@ -2843,6 +2962,15 @@ Worker:
   events:
 
     close:
+
+
+Disposable:
+  type: interface
+
+  commands:
+
+    dispose:
+      internal: true
 
 
 JSHandle:
@@ -3410,7 +3538,6 @@ Request:
       items: NameValue
     isNavigationRequest: boolean
     redirectedFrom: Request?
-    hasResponse: boolean
 
   commands:
 
@@ -3425,9 +3552,6 @@ Request:
         headers:
           type: array
           items: NameValue
-
-  events:
-    response:
 
 Route:
   type: interface
@@ -3593,6 +3717,11 @@ Response:
         headers:
           type: array
           items: NameValue
+
+    httpVersion:
+      internal: true
+      returns:
+        value: string
 
     sizes:
       internal: true
@@ -3855,6 +3984,8 @@ CDPSession:
         method: string
         params: json?
 
+    close:
+
 
 Electron:
   type: interface
@@ -3868,6 +3999,7 @@ Electron:
         args:
           type: array?
           items: string
+        chromiumSandbox: boolean?
         cwd: string?
         env:
           type: array?

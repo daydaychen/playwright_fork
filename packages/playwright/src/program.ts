@@ -21,6 +21,8 @@ import path from 'path';
 
 import { program } from 'playwright-core/lib/cli/program';
 import { gracefullyProcessExitDoNotHang, startProfiling, stopProfiling } from 'playwright-core/lib/utils';
+import * as mcp from 'playwright-core/lib/mcp/exports';
+import { setupExitWatchdog } from 'playwright-core/lib/mcp/exports';
 
 import { builtInReporters, defaultReporter, defaultTimeout } from './common/config';
 import { loadConfigFromFile, loadEmptyConfigForMergeReports, resolveConfigLocation } from './common/configLoader';
@@ -33,10 +35,7 @@ import * as testServer from './runner/testServer';
 import { runWatchModeLoop } from './runner/watchMode';
 import { runAllTestsWithConfig, TestRunner } from './runner/testRunner';
 import { createErrorCollectingReporter } from './runner/reporters';
-import * as mcp from './mcp/sdk/exports';
-import { TestServerBackend } from './mcp/test/testBackend';
-import { decorateCommand } from './mcp/program';
-import { setupExitWatchdog } from './mcp/browser/watchdog';
+import { TestServerBackend, testServerBackendTools } from './mcp/test/testBackend';
 import { ClaudeGenerator, OpencodeGenerator, VSCodeGenerator, CopilotGenerator } from './agents/generateAgents';
 
 import type { ConfigCLIOverrides } from './common/ipc';
@@ -147,12 +146,6 @@ Examples:
   $ npx playwright merge-reports playwright-report`);
 }
 
-function addBrowserMCPServerCommand(program: Command) {
-  const command = program.command('run-mcp-server', { hidden: true });
-  command.description('Interact with the browser over MCP');
-  decorateCommand(command, packageJSON.version);
-}
-
 function addTestMCPServerCommand(program: Command) {
   const command = program.command('run-test-mcp-server', { hidden: true });
   command.description('Interact with the test runner over MCP');
@@ -166,7 +159,9 @@ function addTestMCPServerCommand(program: Command) {
       name: 'Playwright Test Runner',
       nameInConfig: 'playwright-test-runner',
       version: packageJSON.version,
-      create: () => new TestServerBackend(options.config, { muteConsole: options.port === undefined, headless: options.headless }),
+      toolSchemas: testServerBackendTools.map(tool => tool.schema),
+      create: async () => new TestServerBackend(options.config, { muteConsole: options.port === undefined, headless: options.headless }),
+      disposed: async () => { }
     };
     // TODO: add all options from mcp.startHttpServer.
     await mcp.start(factory, { port: options.port === undefined ? undefined : +options.port, host: options.host });
@@ -300,7 +295,7 @@ function overridesFromOptions(options: { [key: string]: any }): ConfigCLIOverrid
     retries: options.retries ? parseInt(options.retries, 10) : undefined,
     reporter: resolveReporterOption(options.reporter),
     shard: resolveShardOption(options.shard),
-    shardWeights: resolveShardWeightsOption(options.shardWeights),
+    shardWeights: resolveShardWeightsOption(),
     timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
     tsconfig: options.tsconfig ? path.resolve(process.cwd(), options.tsconfig) : undefined,
     ignoreSnapshots: options.ignoreSnapshots ? !!options.ignoreSnapshots : undefined,
@@ -308,7 +303,6 @@ function overridesFromOptions(options: { [key: string]: any }): ConfigCLIOverrid
     updateSourceMethod: options.updateSourceMethod,
     runAgents: options.runAgents,
     workers: options.workers,
-    pause: options.pause ? true : undefined,
   };
 
   if (options.browser) {
@@ -324,16 +318,22 @@ function overridesFromOptions(options: { [key: string]: any }): ConfigCLIOverrid
     });
   }
 
-  if (options.headed || options.debug || overrides.pause)
+  if (options.headed || options.debug)
     overrides.use = { headless: false };
   if (!options.ui && options.debug) {
     overrides.debug = true;
-    overrides.pause = true;
     process.env.PWDEBUG = '1';
   }
   if (!options.ui && options.trace) {
     overrides.use = overrides.use || {};
     overrides.use.trace = options.trace;
+  }
+  if (process.env.PWPAUSE === 'cli') {
+    overrides.timeout = 0;
+    overrides.use = overrides.use || {};
+    overrides.use.actionTimeout = 5000;
+  } else if (process.env.PWPAUSE) {
+    overrides.pause = true;
   }
   if (overrides.tsconfig && !fs.existsSync(overrides.tsconfig))
     throw new Error(`--tsconfig "${options.tsconfig}" does not exist`);
@@ -375,14 +375,15 @@ function resolveShardOption(shard?: string): ConfigCLIOverrides['shard'] {
   return { current, total };
 }
 
-function resolveShardWeightsOption(shardWeights?: string): ConfigCLIOverrides['shardWeights'] {
+function resolveShardWeightsOption(): ConfigCLIOverrides['shardWeights'] {
+  const shardWeights = process.env.PWTEST_SHARD_WEIGHTS;
   if (!shardWeights)
     return undefined;
 
   return shardWeights.split(':').map(w => {
     const weight = parseInt(w, 10);
     if (isNaN(weight) || weight < 0)
-      throw new Error(`--shard-weights "${shardWeights}" weights must be non-negative numbers`);
+      throw new Error(`PWTEST_SHARD_WEIGHTS="${shardWeights}" weights must be non-negative numbers`);
     return weight;
   });
 }
@@ -396,14 +397,14 @@ function resolveReporter(id: string) {
   return require.resolve(id, { paths: [process.cwd()] });
 }
 
-const kTraceModes: TraceMode[] = ['on', 'off', 'on-first-retry', 'on-all-retries', 'retain-on-failure', 'retain-on-first-failure'];
+const kTraceModes: TraceMode[] = ['on', 'off', 'on-first-retry', 'on-all-retries', 'retain-on-failure', 'retain-on-first-failure', 'retain-on-failure-and-retries'];
 
 // Note: update docs/src/test-cli-js.md when you update this, program is the source of truth.
 
 const testOptions: [string, { description: string, choices?: string[], preset?: string }][] = [
   /* deprecated */ ['--browser <browser>', { description: `Browser to use for tests, one of "all", "chromium", "firefox" or "webkit" (default: "chromium")` }],
   ['-c, --config <file>', { description: `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"` }],
-  ['--debug', { description: `Run tests with Playwright Inspector. Shortcut for "PWDEBUG=1" environment variable and "--timeout=0 --max-failures=1 --headed --workers=1 --pause" options` }],
+  ['--debug', { description: `Run tests with Playwright Inspector. Shortcut for "PWDEBUG=1" environment variable and "--timeout=0 --max-failures=1 --headed --workers=1" options` }],
   ['--fail-on-flaky-tests', { description: `Fail if any test is flagged as flaky (default: false)` }],
   ['--forbid-only', { description: `Fail if test.only is called (default: false)` }],
   ['--fully-parallel', { description: `Run all tests in parallel (default: false)` }],
@@ -419,7 +420,6 @@ const testOptions: [string, { description: string, choices?: string[], preset?: 
   ['--output <dir>', { description: `Folder for output artifacts (default: "test-results")` }],
   ['--only-changed [ref]', { description: `Only run test files that have been changed between 'HEAD' and 'ref'. Defaults to running all uncommitted changes. Only supports Git.` }],
   ['--pass-with-no-tests', { description: `Makes test run succeed even if no tests were found` }],
-  ['--pause', { description: `Run tests in headed mode and pause at the end of test execution` }],
   ['--project <project-name...>', { description: `Only run tests from the specified list of projects, supports '*' wildcard (default: run all projects)` }],
   ['--quiet', { description: `Suppress stdio` }],
   ['--repeat-each <N>', { description: `Run each test N times (default: 1)` }],
@@ -427,7 +427,6 @@ const testOptions: [string, { description: string, choices?: string[], preset?: 
   ['--retries <retries>', { description: `Maximum retry count for flaky tests, zero for no retries (default: no retries)` }],
   ['--run-agents <mode>', { description: `Run agents to generate the code for page.perform`, choices: ['missing', 'all', 'none'], preset: 'none' }],
   ['--shard <shard>', { description: `Shard tests and execute only the selected shard, specify in the form "current/all", 1-based, for example "3/5"` }],
-  ['--shard-weights <weights>', { description: `Weights for each shard, colon-separated, for example "2:1:1" for 3 shards where the first shard should be allocated half of the work` }],
   ['--test-list <file>', { description: `Path to a file containing a list of tests to run. See https://playwright.dev/docs/test-cli for more details.` }],
   ['--test-list-invert <file>', { description: `Path to a file containing a list of tests to skip. See https://playwright.dev/docs/test-cli for more details.` }],
   ['--timeout <timeout>', { description: `Specify test timeout threshold in milliseconds, zero for unlimited (default: ${defaultTimeout})` }],
@@ -446,7 +445,6 @@ addTestCommand(program);
 addShowReportCommand(program);
 addMergeReportsCommand(program);
 addClearCacheCommand(program);
-addBrowserMCPServerCommand(program);
 addTestMCPServerCommand(program);
 addDevServerCommand(program);
 addTestServerCommand(program);

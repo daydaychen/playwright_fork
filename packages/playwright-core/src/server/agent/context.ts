@@ -17,6 +17,7 @@
 import { BrowserContext } from '../browserContext';
 import { runAction } from './actionRunner';
 import { generateCode } from './codegen';
+import { stripAnsiEscapes } from '../../utils/isomorphic/stringUtils';
 
 import type { Request } from '../network';
 import type * as loopTypes from '@lowire/loop';
@@ -124,35 +125,31 @@ export class Context {
         promises.push(request.response());
     }
 
-    await progress.race([...promises, progress.wait(5000)]);
-    if (!promises.length)
+    if (promises.length)
+      await progress.race([...promises, progress.wait(5000)]);
+    else
       await progress.wait(500);
 
     return result;
   }
 
+  async takeSnapshot(progress: Progress) {
+    const { full } = await this.page.snapshotForAI(progress, { doNotRenderActive: this.agentParams.doNotRenderActive });
+    return redactSecrets(full, this.agentParams?.secrets);
+  }
+
   async snapshotResult(progress: Progress, error?: Error): Promise<loopTypes.ToolResult> {
-    let { full } = await this.page.snapshotForAI(progress);
-    full = this._redactText(full);
+    const snapshot = await this.takeSnapshot(progress);
 
     const text: string[] = [];
     if (error)
-      text.push(`# Error\n${error.message}`);
+      text.push(`# Error\n${stripAnsiEscapes(error.message)}`);
     else
       text.push(`# Success`);
 
-    text.push(`# Page snapshot\n${full}`);
+    text.push(`# Page snapshot\n${snapshot}`);
 
     return {
-      _meta: {
-        'dev.lowire/state': {
-          'Page snapshot': full
-        },
-        'dev.lowire/history': error ? [{
-          category: 'error',
-          content: error.message,
-        }] : [],
-      },
       isError: !!error,
       content: [{ type: 'text', text: text.join('\n\n') }],
     };
@@ -169,17 +166,23 @@ export class Context {
     }));
   }
 
-  private _redactText(text: string): string {
-    const secrets = this.agentParams?.secrets;
-    if (!secrets)
-      return text;
+}
 
-    const redactText = (text: string) => {
-      for (const { name, value } of secrets)
-        text = text.replaceAll(value, `<secret>${name}</secret>`);
-      return text;
-    };
+export function redactSecrets(text: string, secrets: channels.NameValue[] | undefined): string {
+  if (!secrets)
+    return text;
+  for (const { name, value } of secrets)
+    text = text.replaceAll(value, `<secret>${name}</secret>`);
+  return text;
+}
 
-    return redactText(text);
-  }
+export function applySecrets(text: string, secrets: channels.NameValue[] | undefined): string {
+  if (!secrets)
+    return text;
+  const secret = secrets.find(s => s.name === text);
+  if (secret)
+    return secret.value;
+  for (const { name, value } of secrets)
+    text = text.replaceAll(`<secret>${name}</secret>`, value);
+  return text;
 }

@@ -90,8 +90,9 @@ it.describe('should proxy local network requests', () => {
           description: 'link-local'
         }
       ]) {
-        it(`${params.description}`, async ({ platform, browserName, browserType, server, proxyServer }) => {
+        it(`${params.description}`, async ({ platform, browserName, browserType, server, proxyServer, channel }) => {
           it.skip(browserName === 'webkit' && platform === 'darwin' && ['localhost', '127.0.0.1'].includes(params.target) && additionalBypass, 'Mac webkit does not proxy localhost when bypass rules are set.');
+          it.fixme(channel?.startsWith('msedge'), 'times out while loading the page');
 
           const path = `/target-${additionalBypass}-${params.target}.html`;
           server.setRoute(path, async (req, res) => {
@@ -121,6 +122,28 @@ it.describe('should proxy local network requests', () => {
     });
   }
 });
+
+for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+  it(`should allow bypassing ${host} requests`, async ({  browserName, browserType, server, proxyServer }) => {
+    it.fixme(browserName === 'firefox' && host === '[::1]', 'firefox still proxies');
+
+    server.setRoute(`/proxied/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the server</title></html>');
+    });
+    server.setRoute(`/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the proxy</title></html>');
+    });
+    proxyServer.forwardTo(server.PORT, { removePrefix: '/proxied' });
+
+    const browser = await browserType.launch({
+      proxy: { server: `localhost:${proxyServer.PORT}`, bypass: host }
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://${host}:${server.PORT}/proxied/target.html`);
+    expect(await page.title()).toBe('Served by the server');
+    await browser.close();
+  });
+}
 
 it('should authenticate', async ({ browserType, server }) => {
   server.setRoute('/target.html', async (req, res) => {
@@ -175,7 +198,9 @@ it('should work with authenticate followed by redirect', async ({ browserName, b
   await browser.close();
 });
 
-it('should exclude patterns', async ({ browserType, server, browserName, headless }) => {
+it('should exclude patterns', async ({ browserType, server, channel }) => {
+  it.fixme(channel?.startsWith('msedge'), 'times out while loading the page');
+
   server.setRoute('/target.html', async (req, res) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
@@ -224,6 +249,25 @@ it('should exclude patterns', async ({ browserType, server, browserName, headles
 
   await browser.close();
 });
+
+for (const host of ['localhost', '127.0.0.1']) {
+  it(`should bypass proxy for ${host} when ${host} is in bypass list`, async ({ browserType, server, proxyServer }) => {
+    proxyServer.forwardTo(server.PORT, { removePrefix: '/proxied' });
+    server.setRoute(`/proxied/target.html`, async (req, res) => {
+      res.end('<html><title>Served by the server</title></html>');
+    });
+    server.setRoute('/target.html', async (req, res) => {
+      res.end('<html><title>Served by the proxy</title></html>');
+    });
+    const browser = await browserType.launch({
+      proxy: { server: `localhost:${proxyServer.PORT}`, bypass: host }
+    });
+    const page = await browser.newPage();
+    await page.goto(`http://${host}:${server.PORT}/proxied/target.html`);
+    expect(await page.title()).toBe('Served by the server');
+    await browser.close();
+  });
+}
 
 it('should use socks proxy', async ({ browserType, socksPort }) => {
   const browser = await browserType.launch({

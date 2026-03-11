@@ -20,6 +20,10 @@ import { ReadStream } from 'fs';
 import { Protocol } from './protocol';
 import { Serializable, EvaluationArgument, PageFunction, PageFunctionOn, SmartHandle, ElementHandleForTag, BindingSource } from './structs';
 
+// Use the global URLPattern type if available (Node.js 22+, modern browsers),
+// otherwise fall back to `never` so it disappears from union types.
+type URLPattern = typeof globalThis extends { URLPattern: infer T } ? T : never;
+
 type PageWaitForSelectorOptionsNotHidden = PageWaitForSelectorOptions & {
   state?: 'visible'|'attached';
 };
@@ -311,7 +315,7 @@ export interface Page {
    * [`script`](https://playwright.dev/docs/api/class-page#page-add-init-script-option-script) (only supported when
    * passing a function).
    */
-  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg): Promise<void>;
+  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg): Promise<Disposable>;
 
   /**
    * **NOTE** Use locator-based [page.locator(selector[, options])](https://playwright.dev/docs/api/class-page#page-locator)
@@ -916,7 +920,7 @@ export interface Page {
    * @param callback Callback function that will be called in the Playwright's context.
    * @param options
    */
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, arg: JSHandle) => any, options: { handle: true }): Promise<void>;
+  exposeBinding(name: string, playwrightBinding: (source: BindingSource, arg: JSHandle) => any, options: { handle: true }): Promise<Disposable>;
   /**
    * The method adds a function called
    * [`name`](https://playwright.dev/docs/api/class-page#page-expose-binding-option-name) on the `window` object of
@@ -968,7 +972,7 @@ export interface Page {
    * @param callback Callback function that will be called in the Playwright's context.
    * @param options
    */
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any, options?: { handle?: boolean }): Promise<void>;
+  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any, options?: { handle?: boolean }): Promise<Disposable>;
 
   /**
    * Removes all the listeners of the given type (or all registered listeners if no type given). Allows to wait for
@@ -2112,6 +2116,13 @@ export interface Page {
       cacheOutFile?: string;
     };
 
+    expect?: {
+      /**
+       * Default timeout for expect calls in milliseconds, defaults to 5000ms.
+       */
+      timeout?: number;
+    };
+
     /**
      * Limits to use for the agentic loop.
      */
@@ -2244,6 +2255,20 @@ export interface Page {
      */
     trial?: boolean;
   }): Promise<void>;
+
+  /**
+   * Clears all stored console messages from this page. Subsequent calls to
+   * [page.consoleMessages()](https://playwright.dev/docs/api/class-page#page-console-messages) will only return
+   * messages logged after the clear.
+   */
+  clearConsoleMessages(): Promise<void>;
+
+  /**
+   * Clears all stored page errors from this page. Subsequent calls to
+   * [page.pageErrors()](https://playwright.dev/docs/api/class-page#page-page-errors) will only return errors thrown
+   * after the clear.
+   */
+  clearPageErrors(): Promise<void>;
 
   /**
    * **NOTE** Use locator-based [locator.click([options])](https://playwright.dev/docs/api/class-locator#locator-click) instead.
@@ -2733,7 +2758,7 @@ export interface Page {
    * @param name Name of the function on the window object
    * @param callback Callback function which will be called in Playwright's context.
    */
-  exposeFunction(name: string, callback: Function): Promise<void>;
+  exposeFunction(name: string, callback: Function): Promise<Disposable>;
 
   /**
    * **NOTE** Use locator-based [locator.fill(value[, options])](https://playwright.dev/docs/api/class-locator#locator-fill)
@@ -2833,9 +2858,9 @@ export interface Page {
     name?: string;
 
     /**
-     * A glob pattern, regex pattern or predicate receiving frame's `url` as a [URL] object. Optional.
+     * A glob pattern, regex pattern, URL pattern, or predicate receiving frame's `url` as a [URL] object. Optional.
      */
-    url?: string|RegExp|((url: URL) => boolean);
+    url?: string|RegExp|URLPattern|((url: URL) => boolean);
   }): null|Frame;
 
   /**
@@ -2992,7 +3017,7 @@ export interface Page {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -3097,7 +3122,7 @@ export interface Page {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -3476,6 +3501,24 @@ export interface Page {
      */
     timeout?: number;
   }): Promise<string>;
+
+  /**
+   * Returns the [Inspector](https://playwright.dev/docs/api/class-inspector) object associated with this page.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const inspector = page.inspector();
+   * inspector.on('screencastFrame', data => {
+   *   console.log('received frame, jpeg size:', data.length);
+   * });
+   * await inspector.startScreencast();
+   * // ... perform actions ...
+   * await inspector.stopScreencast();
+   * ```
+   *
+   */
+  inspector(): Inspector;
 
   /**
    * **NOTE** Use locator-based [locator.isChecked([options])](https://playwright.dev/docs/api/class-locator#locator-is-checked)
@@ -4081,6 +4124,8 @@ export interface Page {
    * });
    * ```
    *
+   * If a request matches multiple registered routes, the most recently registered route takes precedence.
+   *
    * Page routes take precedence over browser context routes (set up with
    * [browserContext.route(url, handler[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-route))
    * when request matches both handlers.
@@ -4090,19 +4135,19 @@ export interface Page {
    *
    * **NOTE** Enabling routing disables http cache.
    *
-   * @param url A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If
    * [`baseURL`](https://playwright.dev/docs/api/class-browser#browser-new-context-option-base-url) is set in the
    * context options and the provided URL is a string that does not start with `*`, it is resolved using the
    * [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
    * @param handler handler function to route the request.
    * @param options
    */
-  route(url: string|RegExp|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
+  route(url: string|RegExp|URLPattern|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
     /**
      * How often a route should be used. By default it will be used every time.
      */
     times?: number;
-  }): Promise<void>;
+  }): Promise<Disposable>;
 
   /**
    * If specified the network requests that are made in the page will be served from the HAR file. Read more about
@@ -4178,7 +4223,7 @@ export interface Page {
    * [`baseURL`](https://playwright.dev/docs/api/class-browser#browser-new-context-option-base-url) context option.
    * @param handler Handler function to route the WebSocket.
    */
-  routeWebSocket(url: string|RegExp|((url: URL) => boolean), handler: ((websocketroute: WebSocketRoute) => Promise<any>|any)): Promise<void>;
+  routeWebSocket(url: string|RegExp|URLPattern|((url: URL) => boolean), handler: ((websocketroute: WebSocketRoute) => Promise<any>|any)): Promise<void>;
 
   /**
    * Returns the buffer with the captured screenshot.
@@ -4769,10 +4814,10 @@ export interface Page {
    * [page.route(url, handler[, options])](https://playwright.dev/docs/api/class-page#page-route). When
    * [`handler`](https://playwright.dev/docs/api/class-page#page-unroute-option-handler) is not specified, removes all
    * routes for the [`url`](https://playwright.dev/docs/api/class-page#page-unroute-option-url).
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] to match while routing.
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while routing.
    * @param handler Optional handler function to route the request.
    */
-  unroute(url: string|RegExp|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
+  unroute(url: string|RegExp|URLPattern|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
 
   /**
    * Removes all routes created with
@@ -4795,9 +4840,12 @@ export interface Page {
   url(): string;
 
   /**
-   * Video object associated with this page.
+   * Video object associated with this page. Can be used to control video recording with
+   * [video.start([options])](https://playwright.dev/docs/api/class-video#video-start) and
+   * [video.stop([options])](https://playwright.dev/docs/api/class-video#video-stop), or to access the video file when
+   * using the `recordVideo` context option.
    */
-  video(): null|Video;
+  video(): Video;
 
   viewportSize(): null|{
     /**
@@ -5101,11 +5149,11 @@ export interface Page {
     timeout?: number;
 
     /**
-     * A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-     * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-     * equal to the string.
+     * A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+     * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+     * is exactly equal to the string.
      */
-    url?: string|RegExp|((url: URL) => boolean);
+    url?: string|RegExp|URLPattern|((url: URL) => boolean);
 
     /**
      * When to consider operation succeeded, defaults to `load`. Events can be either:
@@ -5219,12 +5267,12 @@ export interface Page {
    * await page.waitForURL('**\/target.html');
    * ```
    *
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-   * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-   * equal to the string.
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+   * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+   * is exactly equal to the string.
    * @param options
    */
-  waitForURL(url: string|RegExp|((url: URL) => boolean), options?: {
+  waitForURL(url: string|RegExp|URLPattern|((url: URL) => boolean), options?: {
     /**
      * Maximum operation time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via
      * `navigationTimeout` option in the config, or by using the
@@ -5440,7 +5488,10 @@ export interface PageAgent {
     maxTokens?: number;
 
     /**
-     * Request timeout in milliseconds. Defaults to action timeout. Pass `0` to disable timeout.
+     * Expect timeout in milliseconds. Defaults to `5000`. The default value can be changed via `expect.timeout` option in
+     * the config, or by specifying the `expect` property of the
+     * [`expect`](https://playwright.dev/docs/api/class-page#page-agent-option-expect) option. Pass `0` to disable
+     * timeout.
      */
     timeout?: number;
   }): Promise<void>;
@@ -5482,7 +5533,11 @@ export interface PageAgent {
     maxTokens?: number;
 
     /**
-     * Request timeout in milliseconds. Defaults to action timeout. Pass `0` to disable timeout.
+     * Perform timeout in milliseconds. Defaults to `5000`. The default value can be changed via `actionTimeout` option in
+     * the config, or by using the
+     * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
+     * or [page.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-page#page-set-default-timeout) methods.
+     * Pass `0` to disable timeout.
      */
     timeout?: number;
   }): Promise<{
@@ -7001,7 +7056,7 @@ export interface Frame {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -7106,7 +7161,7 @@ export interface Frame {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -8277,11 +8332,11 @@ export interface Frame {
     timeout?: number;
 
     /**
-     * A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-     * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-     * equal to the string.
+     * A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+     * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+     * is exactly equal to the string.
      */
-    url?: string|RegExp|((url: URL) => boolean);
+    url?: string|RegExp|URLPattern|((url: URL) => boolean);
 
     /**
      * When to consider operation succeeded, defaults to `load`. Events can be either:
@@ -8318,12 +8373,12 @@ export interface Frame {
    * await frame.waitForURL('**\/target.html');
    * ```
    *
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-   * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-   * equal to the string.
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+   * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+   * is exactly equal to the string.
    * @param options
    */
-  waitForURL(url: string|RegExp|((url: URL) => boolean), options?: {
+  waitForURL(url: string|RegExp|URLPattern|((url: URL) => boolean), options?: {
     /**
      * Maximum operation time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via
      * `navigationTimeout` option in the config, or by using the
@@ -8416,7 +8471,7 @@ export interface BrowserContext {
    * @param callback Callback function that will be called in the Playwright's context.
    * @param options
    */
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, arg: JSHandle) => any, options: { handle: true }): Promise<void>;
+  exposeBinding(name: string, playwrightBinding: (source: BindingSource, arg: JSHandle) => any, options: { handle: true }): Promise<Disposable>;
   /**
    * The method adds a function called
    * [`name`](https://playwright.dev/docs/api/class-browsercontext#browser-context-expose-binding-option-name) on the
@@ -8464,7 +8519,7 @@ export interface BrowserContext {
    * @param callback Callback function that will be called in the Playwright's context.
    * @param options
    */
-  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any, options?: { handle?: boolean }): Promise<void>;
+  exposeBinding(name: string, playwrightBinding: (source: BindingSource, ...args: any[]) => any, options?: { handle?: boolean }): Promise<Disposable>;
 
   /**
    * Adds a script which would be evaluated in one of the following scenarios:
@@ -8501,7 +8556,7 @@ export interface BrowserContext {
    * [`script`](https://playwright.dev/docs/api/class-browsercontext#browser-context-add-init-script-option-script)
    * (only supported when passing a function).
    */
-  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg): Promise<void>;
+  addInitScript<Arg>(script: PageFunction<Arg, any> | { path?: string, content?: string }, arg?: Arg): Promise<Disposable>;
 
   /**
    * Removes all the listeners of the given type (or all registered listeners if no type given). Allows to wait for
@@ -9290,7 +9345,7 @@ export interface BrowserContext {
    * @param name Name of the function on the window object.
    * @param callback Callback function that will be called in the Playwright's context.
    */
-  exposeFunction(name: string, callback: Function): Promise<void>;
+  exposeFunction(name: string, callback: Function): Promise<Disposable>;
 
   /**
    * Grants specified permissions to the browser context. Only grants corresponding permissions to the given origin if
@@ -9318,6 +9373,7 @@ export interface BrowserContext {
    * - `'notifications'`
    * - `'payment-handler'`
    * - `'storage-access'`
+   * - `'screen-wake-lock'`
    * @param options
    */
   grantPermissions(permissions: ReadonlyArray<string>, options?: {
@@ -9401,19 +9457,19 @@ export interface BrowserContext {
    *
    * **NOTE** Enabling routing disables http cache.
    *
-   * @param url A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If
    * [`baseURL`](https://playwright.dev/docs/api/class-browser#browser-new-context-option-base-url) is set in the
    * context options and the provided URL is a string that does not start with `*`, it is resolved using the
    * [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
    * @param handler handler function to route the request.
    * @param options
    */
-  route(url: string|RegExp|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
+  route(url: string|RegExp|URLPattern|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
     /**
      * How often a route should be used. By default it will be used every time.
      */
     times?: number;
-  }): Promise<void>;
+  }): Promise<Disposable>;
 
   /**
    * If specified the network requests that are made in the context will be served from the HAR file. Read more about
@@ -9598,6 +9654,71 @@ export interface BrowserContext {
   setOffline(offline: boolean): Promise<void>;
 
   /**
+   * Clears the existing cookies, local storage and IndexedDB entries for all origins and sets the new storage state.
+   *
+   * **Usage**
+   *
+   * ```js
+   * // Load storage state from a file and apply it to the context.
+   * await context.setStorageState('state.json');
+   * ```
+   *
+   * @param storageState Learn more about [storage state and auth](https://playwright.dev/docs/auth).
+   *
+   * Populates context with given storage state. This option can be used to initialize context with logged-in
+   * information obtained via
+   * [browserContext.storageState([options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-storage-state).
+   */
+  setStorageState(storageState: string|{
+    /**
+     * Cookies to set for context
+     */
+    cookies: Array<{
+      name: string;
+
+      value: string;
+
+      /**
+       * Domain and path are required. For the cookie to apply to all subdomains as well, prefix domain with a dot, like
+       * this: ".example.com"
+       */
+      domain: string;
+
+      /**
+       * Domain and path are required
+       */
+      path: string;
+
+      /**
+       * Unix time in seconds.
+       */
+      expires: number;
+
+      httpOnly: boolean;
+
+      secure: boolean;
+
+      /**
+       * sameSite flag
+       */
+      sameSite: "Strict"|"Lax"|"None";
+    }>;
+
+    origins: Array<{
+      origin: string;
+
+      /**
+       * localStorage to set for context
+       */
+      localStorage: Array<{
+        name: string;
+
+        value: string;
+      }>;
+    }>;
+  }): Promise<void>;
+
+  /**
    * Returns storage state for this browser context, contains current cookies, local storage snapshot and IndexedDB
    * snapshot.
    * @param options
@@ -9656,12 +9777,12 @@ export interface BrowserContext {
    * When [`handler`](https://playwright.dev/docs/api/class-browsercontext#browser-context-unroute-option-handler) is
    * not specified, removes all routes for the
    * [`url`](https://playwright.dev/docs/api/class-browsercontext#browser-context-unroute-option-url).
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] used to register a routing with
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] used to register a routing with
    * [browserContext.route(url, handler[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-route).
    * @param handler Optional handler function used to register a routing with
    * [browserContext.route(url, handler[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-route).
    */
-  unroute(url: string|RegExp|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
+  unroute(url: string|RegExp|URLPattern|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
 
   /**
    * Removes all routes created with
@@ -13751,7 +13872,7 @@ export interface Locator {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -13856,7 +13977,7 @@ export interface Locator {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -15048,9 +15169,9 @@ export interface BrowserType<Unused = {}> {
    * **NOTE** Connecting over the Chrome DevTools Protocol is only supported for Chromium-based browsers.
    *
    * **NOTE** This connection is significantly lower fidelity than the Playwright protocol connection via
-   * [browserType.connect(wsEndpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
+   * [browserType.connect(endpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
    * If you are experiencing issues or attempting to use advanced functionality, you probably want to use
-   * [browserType.connect(wsEndpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
+   * [browserType.connect(endpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
    *
    * **Usage**
    *
@@ -15078,9 +15199,9 @@ export interface BrowserType<Unused = {}> {
    * **NOTE** Connecting over the Chrome DevTools Protocol is only supported for Chromium-based browsers.
    *
    * **NOTE** This connection is significantly lower fidelity than the Playwright protocol connection via
-   * [browserType.connect(wsEndpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
+   * [browserType.connect(endpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
    * If you are experiencing issues or attempting to use advanced functionality, you probably want to use
-   * [browserType.connect(wsEndpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
+   * [browserType.connect(endpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect).
    *
    * **Usage**
    *
@@ -15101,7 +15222,7 @@ export interface BrowserType<Unused = {}> {
    * **NOTE** The major and minor version of the Playwright instance that connects needs to match the version of
    * Playwright that launches the browser (1.2.3 → is compatible with 1.2.x).
    *
-   * @param wsEndpoint A Playwright browser websocket endpoint to connect to. You obtain this endpoint via `BrowserServer.wsEndpoint`.
+   * @param endpoint A Playwright browser websocket endpoint to connect to. You obtain this endpoint via `BrowserServer.wsEndpoint`.
    * @param options
    */
   connect(wsEndpoint: string, options?: ConnectOptions): Promise<Browser>;
@@ -15117,7 +15238,7 @@ export interface BrowserType<Unused = {}> {
    * **NOTE** The major and minor version of the Playwright instance that connects needs to match the version of
    * Playwright that launches the browser (1.2.3 → is compatible with 1.2.x).
    *
-   * @param wsEndpoint A Playwright browser websocket endpoint to connect to. You obtain this endpoint via `BrowserServer.wsEndpoint`.
+   * @param endpoint A Playwright browser websocket endpoint to connect to. You obtain this endpoint via `BrowserServer.wsEndpoint`.
    * @param options
    */
   connect(options: ConnectOptions & { wsEndpoint?: string }): Promise<Browser>;
@@ -15198,6 +15319,13 @@ export interface BrowserType<Unused = {}> {
      * [here](https://peter.sh/experiments/chromium-command-line-switches/).
      */
     args?: Array<string>;
+
+    /**
+     * If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+     * is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+     * browser closes.
+     */
+    artifactsDir?: string;
 
     /**
      * When using [page.goto(url[, options])](https://playwright.dev/docs/api/class-page#page-goto),
@@ -15691,7 +15819,7 @@ export interface BrowserType<Unused = {}> {
 
   /**
    * Returns the browser app instance. You can connect to it via
-   * [browserType.connect(wsEndpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect),
+   * [browserType.connect(endpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect),
    * which requires the major/minor client/server version to match (1.2.3 → is compatible with 1.2.x).
    *
    * **Usage**
@@ -15722,6 +15850,13 @@ export interface BrowserType<Unused = {}> {
      * [here](https://peter.sh/experiments/chromium-command-line-switches/).
      */
     args?: Array<string>;
+
+    /**
+     * If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+     * is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+     * browser closes.
+     */
+    artifactsDir?: string;
 
     /**
      * Browser distribution channel.
@@ -15888,11 +16023,11 @@ export interface BrowserType<Unused = {}> {
  *
  */
 export interface CDPSession {
-  on: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  addListener: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  off: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  removeListener: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
-  once: <T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void) => this;
+  on<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  addListener<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  off<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  removeListener<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
+  once<T extends keyof Protocol.Events | symbol>(event: T, listener: (payload: T extends symbol ? any : Protocol.Events[T extends keyof Protocol.Events ? T : never]) => void): this;
   /**
    * @param method Protocol method name.
    * @param params Optional method parameters.
@@ -15901,6 +16036,156 @@ export interface CDPSession {
     method: T,
     params?: Protocol.CommandParameters[T]
   ): Promise<Protocol.CommandReturnValues[T]>;
+  /**
+   * Emitted when the session is closed, either because the target was closed or `session.detach()` was called.
+   */
+  on(event: 'close', listener: () => any): this;
+
+  /**
+   * Emitted for every CDP event received from the session. Allows subscribing to all CDP events at once without knowing
+   * their names ahead of time.
+   *
+   * **Usage**
+   *
+   * ```js
+   * session.on('event', ({ name, params }) => {
+   *   console.log(`CDP event: ${name}`, params);
+   * });
+   * ```
+   *
+   */
+  on(event: 'event', listener: (data: {
+    /**
+     * CDP event name.
+     */
+    method: string;
+
+    /**
+     * CDP event parameters.
+     */
+    params?: Object;
+  }) => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'close', listener: () => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'event', listener: (data: {
+    /**
+     * CDP event name.
+     */
+    method: string;
+
+    /**
+     * CDP event parameters.
+     */
+    params?: Object;
+  }) => any): this;
+
+  /**
+   * Emitted when the session is closed, either because the target was closed or `session.detach()` was called.
+   */
+  addListener(event: 'close', listener: () => any): this;
+
+  /**
+   * Emitted for every CDP event received from the session. Allows subscribing to all CDP events at once without knowing
+   * their names ahead of time.
+   *
+   * **Usage**
+   *
+   * ```js
+   * session.on('event', ({ name, params }) => {
+   *   console.log(`CDP event: ${name}`, params);
+   * });
+   * ```
+   *
+   */
+  addListener(event: 'event', listener: (data: {
+    /**
+     * CDP event name.
+     */
+    method: string;
+
+    /**
+     * CDP event parameters.
+     */
+    params?: Object;
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  removeListener(event: 'close', listener: () => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  removeListener(event: 'event', listener: (data: {
+    /**
+     * CDP event name.
+     */
+    method: string;
+
+    /**
+     * CDP event parameters.
+     */
+    params?: Object;
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'close', listener: () => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'event', listener: (data: {
+    /**
+     * CDP event name.
+     */
+    method: string;
+
+    /**
+     * CDP event parameters.
+     */
+    params?: Object;
+  }) => any): this;
+
+  /**
+   * Emitted when the session is closed, either because the target was closed or `session.detach()` was called.
+   */
+  prependListener(event: 'close', listener: () => any): this;
+
+  /**
+   * Emitted for every CDP event received from the session. Allows subscribing to all CDP events at once without knowing
+   * their names ahead of time.
+   *
+   * **Usage**
+   *
+   * ```js
+   * session.on('event', ({ name, params }) => {
+   *   console.log(`CDP event: ${name}`, params);
+   * });
+   * ```
+   *
+   */
+  prependListener(event: 'event', listener: (data: {
+    /**
+     * CDP event name.
+     */
+    method: string;
+
+    /**
+     * CDP event parameters.
+     */
+    params?: Object;
+  }) => any): this;
+
   /**
    * Detaches the CDPSession from the target. Once detached, the CDPSession object won't emit any events and can't be
    * used to send messages.
@@ -16683,10 +16968,10 @@ export interface Android {
    * This methods attaches Playwright to an existing Android device. Use
    * [android.launchServer([options])](https://playwright.dev/docs/api/class-android#android-launch-server) to launch a
    * new Android server instance.
-   * @param wsEndpoint A browser websocket endpoint to connect to.
+   * @param endpoint A browser websocket endpoint to connect to.
    * @param options
    */
-  connect(wsEndpoint: string, options?: {
+  connect(endpoint: string, options?: {
     /**
      * Additional HTTP headers to be sent with web socket connect request. Optional.
      */
@@ -18968,7 +19253,7 @@ export interface BrowserServer {
    * Browser websocket url.
    *
    * Browser websocket endpoint which can be used as an argument to
-   * [browserType.connect(wsEndpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect)
+   * [browserType.connect(endpoint[, options])](https://playwright.dev/docs/api/class-browsertype#browser-type-connect)
    * to establish connection to the browser.
    *
    * Note that if the listen `host` option in `launchServer` options is not specified, localhost will be output anyway,
@@ -19181,6 +19466,11 @@ export interface ConsoleMessage {
    */
   text(): string;
 
+  /**
+   * The timestamp of the console message in milliseconds since the Unix epoch.
+   */
+  timestamp(): number;
+
   type(): "log"|"debug"|"info"|"error"|"warning"|"dir"|"dirxml"|"table"|"trace"|"clear"|"startGroup"|"startGroupCollapsed"|"endGroup"|"assert"|"profile"|"profileEnd"|"count"|"time"|"timeEnd";
 
   /**
@@ -19392,6 +19682,23 @@ export interface Dialog {
 }
 
 /**
+ * [Disposable](https://playwright.dev/docs/api/class-disposable) is returned from various methods to allow undoing
+ * the corresponding action. For example,
+ * [page.addInitScript(script[, arg])](https://playwright.dev/docs/api/class-page#page-add-init-script) returns a
+ * [Disposable](https://playwright.dev/docs/api/class-disposable) that can be used to remove the init script.
+ */
+export interface Disposable {
+  /**
+   * Removes the associated resource. For example, removes the init script installed via
+   * [page.addInitScript(script[, arg])](https://playwright.dev/docs/api/class-page#page-add-init-script) or
+   * [browserContext.addInitScript(script[, arg])](https://playwright.dev/docs/api/class-browsercontext#browser-context-add-init-script).
+   */
+  dispose(): Promise<void>;
+
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+/**
  * [Download](https://playwright.dev/docs/api/class-download) objects are dispatched by page via the
  * [page.on('download')](https://playwright.dev/docs/api/class-page#page-event-download) event.
  *
@@ -19551,6 +19858,11 @@ export interface Electron {
      * Toggles bypassing page's Content-Security-Policy. Defaults to `false`.
      */
     bypassCSP?: boolean;
+
+    /**
+     * Enable Chromium sandboxing. Defaults to `false`.
+     */
+    chromiumSandbox?: boolean;
 
     /**
      * Emulates [prefers-colors-scheme](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme)
@@ -19970,7 +20282,7 @@ export interface FrameLocator {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -20076,7 +20388,7 @@ export interface FrameLocator {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -20266,6 +20578,187 @@ export interface FrameLocator {
    *
    */
   owner(): Locator;
+}
+
+/**
+ * Interface to the Playwright inspector.
+ */
+export interface Inspector {
+  /**
+   * Emitted for each captured JPEG screencast frame while the screencast is running.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const inspector = page.inspector();
+   * inspector.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
+   *   require('fs').writeFileSync('frame.jpg', data);
+   * });
+   * await inspector.startScreencast({ maxSize: { width: 1200, height: 800 } });
+   * // ... perform actions ...
+   * await inspector.stopScreencast();
+   * ```
+   *
+   */
+  on(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Emitted for each captured JPEG screencast frame while the screencast is running.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const inspector = page.inspector();
+   * inspector.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
+   *   require('fs').writeFileSync('frame.jpg', data);
+   * });
+   * await inspector.startScreencast({ maxSize: { width: 1200, height: 800 } });
+   * // ... perform actions ...
+   * await inspector.stopScreencast();
+   * ```
+   *
+   */
+  addListener(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  removeListener(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Emitted for each captured JPEG screencast frame while the screencast is running.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const inspector = page.inspector();
+   * inspector.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
+   *   require('fs').writeFileSync('frame.jpg', data);
+   * });
+   * await inspector.startScreencast({ maxSize: { width: 1200, height: 800 } });
+   * // ... perform actions ...
+   * await inspector.stopScreencast();
+   * ```
+   *
+   */
+  prependListener(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Cancels an ongoing
+   * [inspector.pickLocator()](https://playwright.dev/docs/api/class-inspector#inspector-pick-locator) call by
+   * deactivating pick locator mode. If no pick locator mode is active, this method is a no-op.
+   */
+  cancelPickLocator(): Promise<void>;
+
+  /**
+   * Enters pick locator mode where hovering over page elements highlights them and shows the corresponding locator.
+   * Once the user clicks an element, the mode is deactivated and the
+   * [Locator](https://playwright.dev/docs/api/class-locator) for the picked element is returned.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const locator = await page.inspector().pickLocator();
+   * console.log(locator);
+   * ```
+   *
+   */
+  pickLocator(): Promise<Locator>;
+
+  /**
+   * Starts capturing screencast frames. Frames are emitted as
+   * [inspector.on('screencastframe')](https://playwright.dev/docs/api/class-inspector#inspector-event-screencast-frame)
+   * events.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const inspector = page.inspector();
+   * inspector.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, size: ${data.length}`);
+   * });
+   * await inspector.startScreencast({ maxSize: { width: 800, height: 600 } });
+   * // ... perform actions ...
+   * await inspector.stopScreencast();
+   * ```
+   *
+   * @param options
+   */
+  startScreencast(options?: {
+    /**
+     * Maximum screencast frame dimensions. The output frame may be smaller to preserve the page aspect ratio. Defaults to
+     * 800×800.
+     */
+    maxSize?: {
+      /**
+       * Max frame width in pixels.
+       */
+      width: number;
+
+      /**
+       * Max frame height in pixels.
+       */
+      height: number;
+    };
+  }): Promise<void>;
+
+  /**
+   * Stops the screencast started with
+   * [inspector.startScreencast([options])](https://playwright.dev/docs/api/class-inspector#inspector-start-screencast).
+   *
+   * **Usage**
+   *
+   * ```js
+   * await inspector.startScreencast();
+   * // ... perform actions ...
+   * await inspector.stopScreencast();
+   * ```
+   *
+   */
+  stopScreencast(): Promise<void>;
 }
 
 /**
@@ -20679,6 +21172,16 @@ export interface Request {
   allHeaders(): Promise<{ [key: string]: string; }>;
 
   /**
+   * Returns the [Response](https://playwright.dev/docs/api/class-response) object if the response has already been
+   * received, `null` otherwise.
+   *
+   * Unlike [request.response()](https://playwright.dev/docs/api/class-request#request-response), this method does not
+   * wait for the response to arrive. It returns immediately with the response object if the response has been received,
+   * or `null` if the response has not been received yet.
+   */
+  existingResponse(): null|Response;
+
+  /**
    * The method returns `null` unless this request has failed, as reported by `requestfailed` event.
    *
    * **Usage**
@@ -21031,6 +21534,11 @@ export interface Response {
    * @param name Name of the header.
    */
   headerValues(name: string): Promise<Array<string>>;
+
+  /**
+   * Returns the http version used by the response.
+   */
+  httpVersion(): Promise<string>;
 
   /**
    * Returns the JSON representation of response body.
@@ -21743,6 +22251,16 @@ export interface Tracing {
  * console.log(await page.video().path());
  * ```
  *
+ * Alternatively, you can use [video.start([options])](https://playwright.dev/docs/api/class-video#video-start) and
+ * [video.stop([options])](https://playwright.dev/docs/api/class-video#video-stop) to record video manually. This
+ * approach is mutually exclusive with the `recordVideo` option.
+ *
+ * ```js
+ * await page.video().start();
+ * // ... perform actions ...
+ * await page.video().stop({ path: 'video.webm' });
+ * ```
+ *
  */
 export interface Video {
   /**
@@ -21762,6 +22280,49 @@ export interface Video {
    * @param path Path where the video should be saved.
    */
   saveAs(path: string): Promise<void>;
+
+  /**
+   * Starts video recording. This method is mutually exclusive with the `recordVideo` context option.
+   *
+   * **Usage**
+   *
+   * ```js
+   * await page.video().start();
+   * // ... perform actions ...
+   * await page.video().stop({ path: 'video.webm' });
+   * ```
+   *
+   * @param options
+   */
+  start(options?: {
+    /**
+     * Optional dimensions of the recorded video. If not specified the size will be equal to page viewport scaled down to
+     * fit into 800x800. Actual picture of the page will be scaled down if necessary to fit the specified size.
+     */
+    size?: {
+      /**
+       * Video frame width.
+       */
+      width: number;
+
+      /**
+       * Video frame height.
+       */
+      height: number;
+    };
+  }): Promise<void>;
+
+  /**
+   * Stops video recording started with
+   * [video.start([options])](https://playwright.dev/docs/api/class-video#video-start).
+   * @param options
+   */
+  stop(options?: {
+    /**
+     * Path where the video should be saved.
+     */
+    path?: string;
+  }): Promise<void>;
 }
 
 /**
@@ -22051,6 +22612,13 @@ export interface LaunchOptions {
    * [here](https://peter.sh/experiments/chromium-command-line-switches/).
    */
   args?: Array<string>;
+
+  /**
+   * If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+   * is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+   * browser closes.
+   */
+  artifactsDir?: string;
 
   /**
    * Browser distribution channel.

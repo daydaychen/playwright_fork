@@ -223,6 +223,46 @@ it('do not update console count on unhandled rejections', async ({ page }) => {
   await expect.poll(() => messages).toEqual(['begin', 'end']);
 });
 
+it('should have timestamp', async ({ page, isAndroid }) => {
+  it.skip(isAndroid, 'there is a time difference between android emulator and host machine');
+
+  const before = Date.now() - 1;  // Account for the rounding of fractional timestamps.
+  const [message] = await Promise.all([
+    page.waitForEvent('console'),
+    page.evaluate(() => console.log('timestamp test')),
+  ]);
+  const after = Date.now() + 1;  // Account for the rounding of fractional timestamps.
+  expect(message.timestamp()).toBeGreaterThanOrEqual(before);
+  expect(message.timestamp()).toBeLessThanOrEqual(after);
+});
+
+it('should have increasing timestamps', async ({ page }) => {
+  const messages = [];
+  page.on('console', msg => messages.push(msg));
+  await page.evaluate(() => {
+    console.log('first');
+    console.log('second');
+    console.log('third');
+  });
+  expect(messages.length).toBe(3);
+  for (let i = 1; i < messages.length; i++)
+    expect(messages[i].timestamp()).toBeGreaterThanOrEqual(messages[i - 1].timestamp());
+});
+
+it('should have timestamp in consoleMessages', async ({ page, isAndroid }) => {
+  it.skip(isAndroid, 'there is a time difference between android emulator and host machine');
+
+  const before = Date.now() - 1;  // Account for the rounding of fractional timestamps.
+  await page.evaluate(() => console.log('stored message'));
+  const after = Date.now() + 1;  // Account for the rounding of fractional timestamps.
+  const messages = await page.consoleMessages();
+  expect(messages.length).toBeGreaterThanOrEqual(1);
+  const last = messages[messages.length - 1];
+  expect(last.text()).toBe('stored message');
+  expect(last.timestamp()).toBeGreaterThanOrEqual(before);
+  expect(last.timestamp()).toBeLessThanOrEqual(after);
+});
+
 it('consoleMessages should work', async ({ page }) => {
   await page.evaluate(() => {
     for (let i = 0; i < 301; i++)
@@ -238,4 +278,25 @@ it('consoleMessages should work', async ({ page }) => {
 
   expect(objects.length, 'should be at least 100 messages').toBeGreaterThanOrEqual(100);
   expect(objects.slice(objects.length - expected.length), 'should return last messages').toEqual(expected);
+});
+
+it('clearConsoleMessages should work', async ({ page }) => {
+  await page.evaluate(() => {
+    console.log('message1');
+    console.log('message2');
+  });
+
+  let messages = await page.consoleMessages();
+  expect(messages.map(m => m.text())).toContain('message1');
+  expect(messages.map(m => m.text())).toContain('message2');
+
+  await page.clearConsoleMessages();
+
+  messages = await page.consoleMessages();
+  expect(messages).toEqual([]);
+
+  await page.evaluate(() => console.log('message3'));
+  messages = await page.consoleMessages();
+  expect(messages.length).toBe(1);
+  expect(messages[0].text()).toBe('message3');
 });

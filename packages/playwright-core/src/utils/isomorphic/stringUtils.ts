@@ -47,25 +47,20 @@ export function toSnakeCase(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z])([A-Z][a-z])/g, '$1_$2').toLowerCase();
 }
 
-export function toKebabCase(name: string): string {
-  // E.g. backgroundColor => background-color.
-  return name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase();
-}
-
 export function formatObject(value: any, indent = '  ', mode: 'multiline' | 'oneline' = 'multiline'): string {
   if (typeof value === 'string')
     return escapeWithQuotes(value, '\'');
   if (Array.isArray(value))
     return `[${value.map(o => formatObject(o)).join(', ')}]`;
   if (typeof value === 'object') {
-    const keys = Object.keys(value).filter(key => value[key] !== undefined).sort();
+    const keys = Object.keys(value).filter(key => key !== 'timeout' && value[key] !== undefined).sort();
     if (!keys.length)
       return '{}';
     const tokens: string[] = [];
     for (const key of keys)
       tokens.push(`${key}: ${formatObject(value[key])}`);
     if (mode === 'multiline')
-      return `{\n${tokens.join(`,\n${indent}`)}\n}`;
+      return `{\n${tokens.map(t => indent + t).join(`,\n`)}\n}`;
     return `{ ${tokens.join(', ')} }`;
   }
   return String(value);
@@ -192,4 +187,9 @@ export function parseRegex(regex: string): RegExp {
   const source = regex.slice(1, lastSlash);
   const flags = regex.slice(lastSlash + 1);
   return new RegExp(source, flags);
+}
+
+export const ansiRegex = new RegExp('([\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~])))', 'g');
+export function stripAnsiEscapes(str: string): string {
+  return str.replace(ansiRegex, '');
 }

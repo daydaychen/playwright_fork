@@ -16,9 +16,10 @@
 
 import { z as zod3 } from 'zod/v3';
 import * as zod4 from 'zod';
+import fs from 'fs';
 
 import { browserTest as test, expect } from '../config/browserTest';
-import { run, generateAgent, cacheObject, runAgent, setCacheObject } from './agent-helpers';
+import { run, generateAgent, cacheObject, runAgent, setCacheObject, cacheFile } from './agent-helpers';
 
 // LOWIRE_NO_CACHE=1 to generate api caches
 // LOWIRE_FORCE_CACHE=1 to force api caches
@@ -43,26 +44,54 @@ test('click a button', async ({ context }) => {
   });
 });
 
-// broken, let's fix later
 test('retrieve a secret', async ({ context }) => {
   await run(context, async (page, agent) => {
-    await page.setContent('<input type="email" name="email" placeholder="Email Address"/>');
+    await page.setContent(`
+      <input type="email" name="email" placeholder="Email Address"/>
+      <ul aria-label="list of emails"></ul>
+      <script>
+        const input = document.querySelector('input');
+        const list = document.querySelector('ul');
+        input.addEventListener('keydown', () => {
+          const item = document.createElement('li');
+          item.textContent = input.value;
+          list.appendChild(item);
+          input.value = '';
+        });
+      </script>
+    `);
     await agent.perform('Enter x-secret-email into the email field');
+    await agent.expect('Check that email fields contains x-secret-email');
+    await agent.perform('Press enter to add the email to the list');
+    await agent.perform('Enter x-secret-email into the email field and press enter');
+    await agent.expect('Check that list of emails contains two entries with x-secret-email');
     await expect(page.locator('body')).toMatchAriaSnapshot(`
-      - textbox "Email Address": secret-email@at-microsoft.com
+      - textbox "Email Address"
+      - list "list of emails":
+        - listitem: secret-email@at-microsoft.com
+        - listitem: secret-email@at-microsoft.com
     `);
   }, { secrets: { 'x-secret-email': 'secret-email@at-microsoft.com' } });
 
-  expect(await cacheObject()).toEqual({
+  expect(await cacheObject()).toEqual(expect.objectContaining({
     'Enter x-secret-email into the email field': {
       actions: [{
-        code: `await page.getByRole('textbox', { name: 'Email Address' }).fill('secret-email@at-microsoft.com');`,
+        code: `await page.getByRole('textbox', { name: 'Email Address' }).fill('x-secret-email');`,
         method: 'fill',
         selector: `internal:role=textbox[name=\"Email Address\"i]`,
-        text: 'secret-email@at-microsoft.com',
+        text: 'x-secret-email',
       }],
     },
-  });
+    'Check that email fields contains x-secret-email': {
+      'actions': [{
+        'code': `await expect(page.getByRole('textbox', { name: 'Email Address' })).toHaveValue('<secret>x-secret-email</secret>');`,
+        'method': 'expectValue',
+        'selector': 'internal:role=textbox[name="Email Address"i]',
+        'type': 'textbox',
+        'value': '<secret>x-secret-email</secret>',
+      }],
+    },
+  }));
 });
 
 test('extract task', async ({ context }) => {
@@ -174,6 +203,28 @@ test('perform run timeout', async ({ context }) => {
   }
 });
 
+test('perform run timeout inherited from page', async ({ context }) => {
+  {
+    const { page, agent } = await generateAgent(context);
+    await page.setContent(`
+      <button>Wolf</button>
+      <button>Fox</button>
+    `);
+    await agent.perform('click the Fox button');
+  }
+  {
+    const { page, agent } = await runAgent(context);
+    await page.setContent(`
+      <button>Wolf</button>
+      <button>Rabbit</button>
+    `);
+    page.setDefaultTimeout(3000);
+    const error = await agent.perform('click the Fox button').catch(e => e);
+    expect(error.message).toContain('Timeout 3000ms exceeded.');
+    expect(error.message).toContain(`waiting for getByRole('button', { name: 'Fox' })`);
+  }
+});
+
 test('invalid cache file throws error', async ({ context }) => {
   await setCacheObject({
     'some key': {
@@ -192,6 +243,33 @@ Failed to parse cache file ${test.info().outputPath('agent-cache.json')}:
     `.trim());
 });
 
+test('non-json cache file throws a nice error', async ({ context }) => {
+  await fs.promises.writeFile(cacheFile(), 'bogus', 'utf8');
+  const { agent } = await runAgent(context);
+  const error = await agent.perform('click the Test button').catch(e => e);
+  expect(error.message).toContain(`Failed to parse cache file ${test.info().outputPath('agent-cache.json')}:`);
+  expect(error.message.toLowerCase()).toContain(`valid json`);
+});
+
+test('empty cache file works', async ({ context }) => {
+  await fs.promises.writeFile(cacheFile(), '', 'utf8');
+  const { page, agent } = await generateAgent(context);
+  await page.setContent(`<button>Test</button>`);
+  await agent.perform('click the Test button');
+});
+
+test('missing apiKey throws a nice error', async ({ page }) => {
+  const agent = await page.agent({ provider: { api: 'anthropic', model: 'some model' } as any });
+  const error = await agent.perform('click the Test button').catch(e => e);
+  expect(error.message).toContain(`This action requires API key to be set on the page agent`);
+});
+
+test('malformed apiEndpoint throws a nice error', async ({ page }) => {
+  const agent = await page.agent({ provider: { api: 'anthropic', model: 'some model', apiKey: 'some key', apiEndpoint: 'foobar' } });
+  const error = await agent.perform('click the Test button').catch(e => e);
+  expect(error.message).toContain(`Agent API endpoint "foobar" is not a valid URL`);
+});
+
 test('perform reports error', async ({ context }) => {
   const { page, agent } = await generateAgent(context);
   await page.setContent(`
@@ -200,4 +278,51 @@ test('perform reports error', async ({ context }) => {
   `);
   const e = await agent.perform('click the Rabbit button').catch(e => e);
   expect(e.message).toContain('Agent refused to perform action:');
+});
+
+test('should dispatch event and respect dispose()', async ({ context, server, mode }) => {
+  test.skip(mode !== 'default', 'Different errors due to timing');
+
+  let apiResponse;
+  server.setRoute('/api', (req, res) => {
+    apiResponse = res;
+    // stall
+  });
+
+  const apiRequestPromise = server.waitForRequest('/api');
+  const { page, agent } = await generateAgent(context, {
+    provider: {
+      api: 'anthropic',
+      apiKey: 'not a real key',
+      apiEndpoint: server.PREFIX + '/api',
+      model: 'no such model',
+    },
+  });
+  await page.setContent(`<button>Wolf</button>`);
+
+  const promiseCanceledByDispose = agent.perform('click the Wolf button').catch(e => e);
+  let promiseAfterDispose;
+  let eventCounter = 0;
+
+  agent.on('turn', async () => {
+    ++eventCounter;
+    if (eventCounter > 1)
+      return;
+
+    await apiRequestPromise;
+    void agent.dispose();
+    promiseAfterDispose = agent.perform('click the Wolf button again').catch(e => e);
+    apiResponse.end();
+  });
+
+  const errorCanceledByDispose = await promiseCanceledByDispose;
+  expect(errorCanceledByDispose.message).toContain('The agent is disposed');
+  expect(errorCanceledByDispose.message).not.toContain('after being disposed');
+
+  const errorAfterDispose = await promiseAfterDispose;
+  expect(errorAfterDispose.message).toContain('Target page, context or browser has been closed');
+
+  // no more events after dispose
+  await page.waitForTimeout(1000);
+  expect(eventCounter).toBe(1);
 });

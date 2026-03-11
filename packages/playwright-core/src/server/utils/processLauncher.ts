@@ -55,15 +55,15 @@ export async function gracefullyCloseAll() {
   await Promise.all(Array.from(gracefullyCloseSet).map(gracefullyClose => gracefullyClose().catch(e => {})));
 }
 
-export function gracefullyProcessExitDoNotHang(code: number) {
+export function gracefullyProcessExitDoNotHang(code: number, onExit?: () => Promise<void>) {
   // Force exit after 30 seconds.
+  const beforeExit = onExit ? () => onExit().catch(() => {}) : () => Promise.resolve();
   // eslint-disable-next-line no-restricted-properties
-  setTimeout(() => process.exit(code), 30000);
+  const callback = () => beforeExit().then(() => process.exit(code));
+
+  setTimeout(callback, 30000);
   // Meanwhile, try to gracefully close all browsers.
-  gracefullyCloseAll().then(() => {
-    // eslint-disable-next-line no-restricted-properties
-    process.exit(code);
-  });
+  gracefullyCloseAll().then(callback);
 }
 
 function exitHandler() {
@@ -136,6 +136,7 @@ export async function launchProcess(options: LaunchProcessOptions): Promise<Laun
     // process group, making it possible to kill child process tree with `.kill(-pid)` command.
     // @see https://nodejs.org/api/child_process.html#child_process_options_detached
     detached: process.platform !== 'win32',
+    windowsHide: true,
     env: options.env,
     cwd: options.cwd,
     shell: options.shell,
@@ -233,7 +234,7 @@ export async function launchProcess(options: LaunchProcessOptions): Promise<Laun
       // Force kill the browser.
       try {
         if (process.platform === 'win32') {
-          const taskkillProcess = childProcess.spawnSync(`taskkill /pid ${spawnedProcess.pid} /T /F`, { shell: true });
+          const taskkillProcess = childProcess.spawnSync(`taskkill /pid ${spawnedProcess.pid} /T /F`, { shell: true, windowsHide: true });
           const [stdout, stderr] = [taskkillProcess.stdout.toString(), taskkillProcess.stderr.toString()];
           if (stdout)
             options.log(`[pid=${spawnedProcess.pid}] taskkill stdout: ${stdout}`);

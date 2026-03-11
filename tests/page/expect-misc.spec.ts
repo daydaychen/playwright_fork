@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { CSSProperties } from 'packages/playwright-test';
 import { stripAnsi } from '../config/utils';
 import { test, expect } from './pageTest';
 
@@ -411,6 +410,15 @@ Timeout:  10000ms
     await page.goto('data:text/html,<div>A</div>');
     await expect(page).toHaveURL('DATA:teXT/HTml,<div>a</div>', { ignoreCase: true });
   });
+
+  test('support URLPattern', async ({ page }) => {
+    test.skip(globalThis.URLPattern === undefined, 'URLPattern is not supported in this environment');
+    await page.goto('data:text/html,<div>A</div>');
+    // @ts-ignore URLPattern is not in @types/node yet
+    await expect(page).toHaveURL(new URLPattern({ protocol: 'data' }));
+    // @ts-ignore
+    await expect(page).not.toHaveURL(new URLPattern({ protocol: 'http' }));
+  });
 });
 
 test.describe('toHaveAttribute', () => {
@@ -508,40 +516,67 @@ Timeout: 1000ms`);
 });
 
 test.describe('toHaveCSS', () => {
-  test('pass with css property', async ({ page }) => {
+  test('pass', async ({ page }) => {
     await page.setContent('<div id=node style="color: rgb(255, 0, 0)">Text content</div>');
     const locator = page.locator('#node');
     await expect(locator).toHaveCSS('color', 'rgb(255, 0, 0)');
   });
 
-  test('pass with custom css property', async ({ page }) => {
+  test('custom css properties', async ({ page }) => {
     await page.setContent('<div id=node style="--custom-color-property:#FF00FF;">Text content</div>');
     const locator = page.locator('#node');
     await expect(locator).toHaveCSS('--custom-color-property', '#FF00FF');
   });
 
-  test('pass with CSSPProperties object', async ({ page }) => {
-    await page.setContent('<div id=node style="color: rgb(255, 0, 0); border: 1px solid rgb(0, 255, 0);">Text content</div>');
+  test('fail with bad arguments', async ({ page }) => {
+    await page.setContent(`<div id=node>hi</div>`);
     const locator = page.locator('#node');
-    await expect(locator).toHaveCSS({ 'color': 'rgb(255, 0, 0)', 'border': '1px solid rgb(0, 255, 0)' });
+    try {
+      await expect(locator).toHaveCSS('property', {} as any);
+      expect(true, 'should throw!').toBe(false);
+    } catch (error) {
+      expect(error.message).toContain(`toHaveCSS expected value must be a string or a regular expression`);
+    }
+    try {
+      await expect(locator).toHaveCSS(123 as any, '123');
+      expect(true, 'should throw!').toBe(false);
+    } catch (error) {
+      expect(error.message).toContain(`toHaveCSS argument must be a string or an object`);
+    }
   });
 
-  test('pass with CSSPProperties object with camelCased properties', async ({ page }) => {
-    await page.setContent('<div id=node style="background-color: red">Text content</div>');
+  test('pass with object', async ({ page }) => {
+    await page.setContent(`<div id=node style="color: rgb(255, 0, 0); display: flex; background-color: red;">Text content</div>`);
     const locator = page.locator('#node');
-    await expect(locator).toHaveCSS({ 'backgroundColor': 'rgb(255, 0, 0)' });
+    await expect(locator).toHaveCSS({
+      color: 'rgb(255, 0, 0)',
+      display: 'flex',
+      backgroundColor: 'rgb(255, 0, 0)',
+    });
   });
 
-  test('pass with CSSPProperties object with vendor-prefixed properties', async ({ page }) => {
-    await page.setContent('<div id=node style="-webkit-transform: rotate(45deg);">Text content</div>');
+  test('does not support custom properties inside object', async ({ page }) => {
+    await page.setContent(`<div id=node style="--my-color: blue">Text content</div>`);
     const locator = page.locator('#node');
-    await expect(locator).toHaveCSS({ 'WebkitTransform': 'matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0)' });
+    await expect(locator).toHaveCSS({ '--my-color': '' } as any);
   });
 
-  test('pass with CSSPProperties object with custom properties', async ({ page }) => {
-    await page.setContent('<div id=node style="--my-color: blue;">Text content</div>');
+  test('fail with object', async ({ page }) => {
+    await page.setContent(`<div id=node style="color: rgb(255, 0, 0); display: flex; background-color: red;">Text content</div>`);
     const locator = page.locator('#node');
-    await expect(locator).toHaveCSS({ '--my-color': 'blue' } as CSSProperties);
+    const error = await expect(locator).toHaveCSS({
+      'color': 'blue',
+      'display': 'flex',
+      'backgroundColor': 'rgb(255, 0, 0)',
+    }, { timeout: 3000 }).catch(e => e);
+    expect(stripAnsi(error.message)).toContain(`
+  Object {
+    "backgroundColor": "rgb(255, 0, 0)",
+-   "color": "blue",
++   "color": "rgb(255, 0, 0)",
+    "display": "flex",
+  }`);
+    expect(stripAnsi(error.message)).not.toContain(`unexpected value "[object Object]"`);
   });
 });
 
@@ -590,7 +625,7 @@ test.describe('toBeInViewport', () => {
   test('should have good stack', async ({ page }) => {
     let error;
     try {
-      await expect(page.locator('body')).not.toBeInViewport({ timeout: 500 });
+      await expect(page.locator('body')).not.toBeInViewport({ timeout: 3000 });
     } catch (e) {
       error = e;
     }

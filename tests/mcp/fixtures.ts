@@ -25,9 +25,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ListRootsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { TestServer } from '../config/testserver';
 import { serverFixtures } from '../config/serverFixtures';
-import { parseResponse } from '../../packages/playwright/lib/mcp/browser/response';
+import { parseResponse } from '../../packages/playwright-core/lib/tools/response';
+import { commonFixtures } from '../config/commonFixtures';
 
-import type { Config } from '../../packages/playwright/src/mcp/config';
+import type { CommonFixtures, CommonWorkerFixtures } from '../config/commonFixtures';
+import type { Config } from '../../packages/playwright-core/src/mcp/config.d';
 import type { BrowserContext } from 'playwright';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Stream } from 'stream';
@@ -38,6 +40,8 @@ export { parseResponse };
 export type TestOptions = {
   mcpArgs: string[] | undefined;
   mcpBrowser: string | undefined;
+  mcpBrowserNormalized: string | undefined;
+  mcpCaps: string[] | undefined;
   mcpServerType: 'mcp' | 'test-mcp';
 };
 
@@ -51,7 +55,7 @@ export type StartClient = (options?: {
   args?: string[],
   omitArgs?: string[],
   cwd?: string,
-  config?: Config,
+  config?: Config | string,
   roots?: { name: string, uri: string }[],
   rootsResponseDelay?: number,
   env?: NodeJS.ProcessEnv,
@@ -74,17 +78,20 @@ type WorkerFixtures = {
   _workerServers: { server: TestServer, httpsServer: TestServer };
 };
 
-export const serverTest = baseTest.extend<ServerFixtures, ServerWorkerOptions>(serverFixtures);
+export const serverTest = baseTest
+    .extend<CommonFixtures, CommonWorkerFixtures>(commonFixtures)
+    .extend<ServerFixtures, ServerWorkerOptions>(serverFixtures);
 
 export const test = serverTest.extend<TestFixtures & TestOptions, WorkerFixtures>({
   mcpArgs: [undefined, { option: true }],
+  mcpCaps: [undefined, { option: true }],
 
   client: async ({ startClient }, use) => {
     const { client } = await startClient();
     await use(client);
   },
 
-  startClient: async ({ mcpHeadless, mcpBrowser, mcpArgs, mcpServerType }, use, testInfo) => {
+  startClient: async ({ mcpHeadless, mcpBrowser, mcpArgs, mcpServerType, mcpCaps }, use, testInfo) => {
     const configDir = path.dirname(test.info().config.configFile!);
     const clients: Client[] = [];
 
@@ -93,18 +100,21 @@ export const test = serverTest.extend<TestFixtures & TestOptions, WorkerFixtures
 
       if (mcpHeadless)
         args.push('--headless');
+      if (mcpCaps?.length)
+        args.push(`--caps=${mcpCaps.join(',')}`);
 
       if (mcpServerType === 'test-mcp') {
         if (!options?.args?.some(arg => arg.startsWith('--config')))
           args.push(`--config=${test.info().outputPath()}`);
       } else {
-        if (process.env.CI && process.platform === 'linux')
-          args.push('--no-sandbox');
         if (mcpBrowser)
           args.push(`--browser=${mcpBrowser}`);
         if (options?.config) {
           const configFile = testInfo.outputPath('config.json');
-          await fs.promises.writeFile(configFile, JSON.stringify(options.config, null, 2));
+          if (typeof options.config === 'object')
+            await fs.promises.writeFile(configFile, JSON.stringify(options.config, null, 2));
+          else if (typeof options.config === 'string')
+            await fs.promises.writeFile(configFile, options.config.trim());
           args.push(`--config=${path.relative(configDir, configFile)}`);
         }
         if (!options?.noTimeoutForTest)
@@ -192,6 +202,11 @@ export const test = serverTest.extend<TestFixtures & TestOptions, WorkerFixtures
 
   mcpBrowser: ['chrome', { option: true }],
 
+  mcpBrowserNormalized: async ({ mcpBrowser }, use) => {
+    const normalized = mcpBrowser?.replace(/chromium/, 'chrome-for-testing');
+    await use(normalized);
+  },
+
   mcpServerType: ['mcp', { option: true }],
 });
 
@@ -223,16 +238,27 @@ type Response = Awaited<ReturnType<Client['callTool']>>;
 export const expect = baseExpect.extend({
   toHaveResponse(response: Response, object: any) {
     const parsed = parseResponse(response);
+    const text = parsed.text;
     const isNot = this.isNot;
+
+    const keys = Object.keys(object);
+    for (const key of Object.keys(parsed)) {
+      if (!keys.includes(key))
+        delete parsed[key];
+    }
+
     try {
-      if (isNot)
+      if (isNot) {
         expect(parsed).not.toEqual(expect.objectContaining(object));
-      else
+      } else {
         expect(parsed).toEqual(expect.objectContaining(object));
+        if (parsed.isError && !object.isError)
+          throw new Error('Response is an error, but expected is not');
+      }
     } catch (e) {
       return {
         pass: isNot,
-        message: () => e.message,
+        message: () => e.message + '\n\nResponse text:\n' + text,
       };
     }
     return {
@@ -266,11 +292,7 @@ export const expect = baseExpect.extend({
   },
 });
 
-export function formatOutput(output: string): string[] {
-  return output.split('\n').map(line => line.replace(/^pw:mcp:test /, '').replace(/user data dir.*/, 'user data dir').trim()).filter(Boolean);
-}
-
-export const mcpServerPath = [path.join(__dirname, '../../packages/playwright/cli.js'), 'run-mcp-server'];
+export const mcpServerPath = [path.join(__dirname, '../../packages/playwright-core/cli.js'), 'run-mcp-server'];
 export const testMcpServerPath = [path.join(__dirname, '../../packages/playwright-test/cli.js'), 'run-test-mcp-server'];
 
 type Files = { [key: string]: string | Buffer };
@@ -322,7 +344,10 @@ export async function prepareDebugTest(startClient: StartClient, testFile?: stri
   return { client, id };
 }
 
-export const lowireMeta = {
-  'dev.lowire/history': true,
-  'dev.lowire/state': true,
-};
+export function formatLog(stderr: string) {
+  const lines = stderr.split('\n').filter(l => l.startsWith('pw:mcp:test')).map(l => l.replace(/^pw:mcp:test\s+/, ''));
+  const object = {};
+  for (const line of lines)
+    object[line] = (object[line] || 0) + 1;
+  return object;
+}

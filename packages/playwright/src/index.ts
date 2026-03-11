@@ -22,7 +22,7 @@ import { setBoxedStackPrefixes, createGuid, currentZone, debugMode, jsonStringif
 
 import { currentTestInfo } from './common/globals';
 import { rootTestType } from './common/testType';
-import { createCustomMessageHandler } from './mcp/test/browserBackend';
+import { createCustomMessageHandler, runDaemonForContext } from './mcp/test/browserBackend';
 
 import type { Fixtures, PlaywrightTestArgs, PlaywrightTestOptions, PlaywrightWorkerArgs, PlaywrightWorkerOptions, ScreenshotMode, TestInfo, TestType, VideoMode } from '../types/test';
 import type { ContextReuseMode } from './common/config';
@@ -89,6 +89,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       handleSIGINT: false,
       ...launchOptions,
       tracesDir: tracing().tracesDir(),
+      artifactsDir: tracing().artifactsDir(),
     };
     if (headless !== undefined)
       options.headless = headless;
@@ -105,9 +106,9 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       throw new Error(`Unexpected browserName "${browserName}", must be one of "chromium", "firefox" or "webkit"`);
 
     if (connectOptions) {
-      const browser = await playwright[browserName].connect({
+      const browser = await playwright[browserName].connect(connectOptions.wsEndpoint, {
         ...connectOptions,
-        exposeNetwork: connectOptions.exposeNetwork ?? (connectOptions as any)._exposeNetwork,
+        exposeNetwork: connectOptions.exposeNetwork,
         headers: {
           // HTTP headers are ASCII only (not UTF-8).
           'x-playwright-launch-options': jsonStringifyForceASCII(_browserOptions),
@@ -231,10 +232,12 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     });
   }, { box: true }],
 
-  _setupContextOptions: [async ({ playwright, actionTimeout, navigationTimeout, testIdAttribute }, use, testInfo) => {
+  _setupContextOptions: [async ({ playwright, actionTimeout, navigationTimeout, testIdAttribute }, use, _testInfo) => {
+    const testInfo = _testInfo as TestInfoImpl;
     if (testIdAttribute)
       playwrightLibrary.selectors.setTestIdAttribute(testIdAttribute);
     testInfo.snapshotSuffix = process.platform;
+    testInfo._onCustomMessageCallback = () => Promise.reject(new Error('Only tests that use default Playwright context or page fixture support test_debug'));
     if (debugMode() === 'inspector')
       (testInfo as TestInfoImpl)._setDebugMode();
 
@@ -389,7 +392,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
         const preserveVideo = captureVideo && (videoMode === 'on' || (testFailed && videoMode === 'retain-on-failure') || (videoMode === 'on-first-retry' && testInfo.retry === 1));
         if (preserveVideo) {
           const { pagesWithVideo: pagesForVideo } = contexts.get(context)!;
-          const videos = pagesForVideo.map(p => p.video()).filter(video => !!video);
+          const videos = pagesForVideo.map(p => p.video());
           await Promise.all(videos.map(async v => {
             try {
               const savedPath = testInfo.outputPath(`video${counter ? '-' + counter : ''}.webm`);
@@ -424,19 +427,22 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
     await use(reuse);
   }, { scope: 'worker',  title: 'context', box: true }],
 
-  context: async ({ browser, _reuseContext, _contextFactory }, use, testInfo) => {
+  context: async ({ browser, _reuseContext, _contextFactory }, use, testInfoPublic) => {
     const browserImpl = browser as BrowserImpl;
+    const testInfo = testInfoPublic as TestInfoImpl;
     attachConnectedHeaderIfNeeded(testInfo, browserImpl);
     if (!_reuseContext) {
       const { context, close } = await _contextFactory();
-      (testInfo as TestInfoImpl)._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+      testInfo._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+      testInfo._onDidFinishTestFunctionCallbacks.add(() => runDaemonForContext(testInfo, context));
       await use(context);
       await close();
       return;
     }
 
     const context = await browserImpl._wrapApiCall(() => browserImpl._newContextForReuse(), { internal: true });
-    (testInfo as TestInfoImpl)._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+    testInfo._onCustomMessageCallback = createCustomMessageHandler(testInfo, context);
+    testInfo._onDidFinishTestFunctionCallbacks.add(() => runDaemonForContext(testInfo, context));
     await use(context);
     const closeReason = testInfo.status === 'timedOut' ? 'Test timeout of ' + testInfo.timeout + 'ms exceeded.' : 'Test ended.';
     await browserImpl._wrapApiCall(() => browserImpl._disconnectFromReusedContext(closeReason), { internal: true });
@@ -477,6 +483,9 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures> = ({
       limits: agentOptions?.limits,
       secrets: agentOptions?.secrets,
       systemPrompt: agentOptions?.systemPrompt,
+      expect: {
+        timeout: testInfoImpl._projectInternal.expect?.timeout,
+      },
     });
 
     await use(agent);
@@ -697,7 +706,7 @@ class ArtifactsRecorder {
 
   async willStartTest(testInfo: TestInfoImpl) {
     this._testInfo = testInfo;
-    testInfo._onDidFinishTestFunctionCallback = () => this.didFinishTestFunction();
+    testInfo._onDidFinishTestFunctionCallbacks.add(() => this.didFinishTestFunction());
 
     this._screenshotRecorder.fixOrdinal();
 

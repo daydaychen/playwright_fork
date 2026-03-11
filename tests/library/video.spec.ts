@@ -21,6 +21,7 @@ import { PNG, jpegjs } from 'playwright-core/lib/utilsBundle';
 import { registry } from '../../packages/playwright-core/lib/server';
 import { expect, browserTest as it } from '../config/browserTest';
 import { parseTraceRaw, rafraf } from '../config/utils';
+import { kTargetClosedErrorMessage } from '../config/errors';
 
 export class VideoPlayer {
   fileName: string;
@@ -36,7 +37,7 @@ export class VideoPlayer {
     const ffmpeg = registry.findExecutable('ffmpeg')!.executablePathOrDie('javascript');
     // Force output frame rate to 25 fps as otherwise it would produce one image per timebase unit
     // which is 1 / (25 * 1000).
-    this.output = spawnSync(ffmpeg, ['-i', this.fileName, '-r', '25', `${this.fileName}-%03d.png`]).stderr.toString();
+    this.output = spawnSync(ffmpeg, ['-i', this.fileName, '-r', '25', `${this.fileName}-%04d.png`]).stderr.toString();
 
     const lines = this.output.split('\n');
     let framesLine = lines.find(l => l.startsWith('frame='))!;
@@ -67,7 +68,7 @@ export class VideoPlayer {
 
   frame(frame: number, offset = { x: 10, y: 10 }): any {
     if (!this.cache.has(frame)) {
-      const gap = '0'.repeat(3 - String(frame).length);
+      const gap = '0'.repeat(4 - String(frame).length);
       const buffer = fs.readFileSync(`${this.fileName}-${gap}${frame}.png`);
       this.cache.set(frame, PNG.sync.read(buffer));
     }
@@ -80,6 +81,10 @@ export class VideoPlayer {
 
 type Pixel = { r: number, g: number, b: number, alpha: number };
 type PixelPredicate = (pixel: Pixel) => boolean;
+
+function isAlmostWhite({ r, g, b, alpha }: Pixel): boolean {
+  return r > 185 && g > 185 && b > 185 && alpha === 255;
+}
 
 function isAlmostRed({ r, g, b, alpha }: Pixel): boolean {
   return r > 185 && g < 70 && b < 70 && alpha === 255;
@@ -132,6 +137,10 @@ function findVideos(videoDir: string) {
 }
 
 function expectRedFrames(videoFile: string, size: { width: number, height: number }) {
+  expectFrames(videoFile, size, isAlmostRed);
+}
+
+function expectFrames(videoFile: string, size: { width: number, height: number }, pixelPredicate: PixelPredicate) {
   const videoPlayer = new VideoPlayer(videoFile);
   const duration = videoPlayer.duration;
   expect(duration).toBeGreaterThan(0);
@@ -141,11 +150,11 @@ function expectRedFrames(videoFile: string, size: { width: number, height: numbe
 
   {
     const pixels = videoPlayer.seekLastFrame().data;
-    expectAll(pixels, isAlmostRed);
+    expectAll(pixels, pixelPredicate);
   }
   {
-    const pixels = videoPlayer.seekLastFrame({ x: size.width - 20, y: 0 }).data;
-    expectAll(pixels, isAlmostRed);
+    const pixels = videoPlayer.seekLastFrame({ x: size.width - 20, y: 10 }).data;
+    expectAll(pixels, pixelPredicate);
   }
 }
 
@@ -248,36 +257,6 @@ it.describe('screencast', () => {
     expect(path).toContain(videosPath);
     await context.close();
     expect(fs.existsSync(path)).toBeTruthy();
-  });
-
-  it('saveAs should throw when no video frames', async ({ browser }, testInfo) => {
-    const videosPath = testInfo.outputPath('');
-    const size = { width: 320, height: 240 };
-    const context = await browser.newContext({
-      recordVideo: {
-        dir: videosPath,
-        size
-      },
-      viewport: size,
-    });
-
-    const page = await context.newPage();
-    const [popup] = await Promise.all([
-      page.context().waitForEvent('page'),
-      page.evaluate(() => {
-        const win = window.open('about:blank');
-        win.close();
-      }),
-    ]);
-    await page.close();
-
-    const saveAsPath = testInfo.outputPath('my-video.webm');
-    const error = await popup.video().saveAs(saveAsPath).catch(e => e);
-    // WebKit pauses renderer before win.close() and actually writes something,
-    // and other browsers are sometimes fast as well.
-    if (!fs.existsSync(saveAsPath))
-      expect(error.message).toContain('Page did not produce any video frames');
-    await context.close();
   });
 
   it('should delete video', async ({ browser }, testInfo) => {
@@ -502,15 +481,15 @@ it.describe('screencast', () => {
     expect(duration).toBeGreaterThan(0);
 
     {
-      const pixels = videoPlayer.seekLastFrame({ x: 0, y: 0 }).data;
+      const pixels = videoPlayer.seekLastFrame({ x: 10, y: 10 }).data;
       expectAll(pixels, isAlmostRed);
     }
     {
-      const pixels = videoPlayer.seekLastFrame({ x: 300, y: 0 }).data;
+      const pixels = videoPlayer.seekLastFrame({ x: 300, y: 10 }).data;
       expectAll(pixels, isAlmostGray);
     }
     {
-      const pixels = videoPlayer.seekLastFrame({ x: 0, y: 200 }).data;
+      const pixels = videoPlayer.seekLastFrame({ x: 10, y: 200 }).data;
       expectAll(pixels, isAlmostGray);
     }
     {
@@ -693,7 +672,6 @@ it.describe('screencast', () => {
   });
 
   it('should not create video for internal pages', async ({ browser, server }, testInfo) => {
-    it.fixme(true, 'https://github.com/microsoft/playwright/issues/6743');
     server.setRoute('/empty.html', (req, res) => {
       res.setHeader('Set-Cookie', 'name=value');
       res.end();
@@ -832,6 +810,177 @@ it.describe('screencast', () => {
     };
     expect(isAlmostRed(pixel)).toBe(true);
   });
+
+  it('video.start/stop twice', async ({ browser }, testInfo) => {
+    const size = { width: 800, height: 800 };
+    const context = await browser.newContext({ viewport: size });
+    const page = await context.newPage();
+
+    await page.video().start({ size });
+    await page.evaluate(() => document.body.style.backgroundColor = 'red');
+    await rafraf(page, 100);
+    const videoPath1 = await page.video().path();
+    expect(videoPath1).toBeDefined();
+    await page.video().stop();
+    expectRedFrames(videoPath1, size);
+
+    await page.video().start({ size });
+    await page.evaluate(() => document.body.style.backgroundColor = 'rgb(100,100,100)');
+    await rafraf(page, 100);
+    const videoPath2 = await page.video().path();
+    expect(videoPath2).toBeDefined();
+    expect(videoPath2).not.toEqual(videoPath1);
+    const videoPath3 = testInfo.outputPath('video3.webm');
+    await page.video().stop({ path: videoPath3 });
+    const contents2 = fs.readFileSync(videoPath2).toString('base64');
+    const contents3 = fs.readFileSync(videoPath3).toString('base64');
+    expect(contents2 === contents3).toBeTruthy();
+    expectFrames(videoPath3, size, isAlmostGray);
+
+    await context.close();
+  });
+
+  it('video.start should fail when recordVideo is set, but stop should work', async ({ browser }, testInfo) => {
+    const context = await browser.newContext({
+      recordVideo: {
+        dir: testInfo.outputPath(''),
+      },
+    });
+    const page = await context.newPage();
+    const error = await page.video().start().catch(e => e);
+    expect(error.message).toContain('Video is already being recorded');
+    await page.video().stop({ path: testInfo.outputPath('video.webm') });
+    await context.close();
+  });
+
+  it('video.start should fail when another recording is in progress', async ({ page, trace }) => {
+    it.skip(trace === 'on', 'trace=on has different screencast image configuration');
+    await page.video().start();
+    const error = await page.video().start().catch(e => e);
+    expect(error.message).toContain('Video is already being recorded');
+  });
+
+  it('video.stop should fail when no recording is in progress', async ({ browser }, testInfo) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const error = await page.video().stop().catch(e => e);
+    expect(error.message).toContain('Video is not being recorded');
+    await context.close();
+  });
+
+  it('video.start should finish when page is closed', async ({ browser }, testInfo) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.video().start({ size: { width: 800, height: 800 } });
+    await page.evaluate(() => document.body.style.backgroundColor = 'red');
+    await rafraf(page, 100);
+    const videoPath = await page.video().path();
+    expect(videoPath).toBeDefined();
+    await page.close();
+    const error = await page.video().stop().catch(e => e);
+    expect(error.message).toContain(kTargetClosedErrorMessage);
+    const newPath = testInfo.outputPath('video.webm');
+    await page.video().saveAs(newPath);
+    expect(fs.existsSync(newPath)).toBeTruthy();
+    await context.close();
+  });
+
+  it('empty video', async ({ browser }, testInfo) => {
+    const size = { width: 800, height: 800 };
+    const context = await browser.newContext({ viewport: size });
+    const page = await context.newPage();
+    await page.video().start({ size });
+    const videoPath = testInfo.outputPath('empty-video.webm');
+    await page.video().stop({ path: videoPath });
+    await context.close();
+    expectFrames(videoPath, size, isAlmostWhite);
+  });
+
+  it('inspector.startScreencast emits screencastframe events', async ({ browser, server, trace }) => {
+    it.skip(trace === 'on', 'trace=on has different screencast image configuration');
+    const context = await browser.newContext({ viewport: { width: 1000, height: 400 } });
+    const page = await context.newPage();
+
+    const frames: { data: Buffer }[] = [];
+    page.inspector().on('screencastframe', frame => frames.push(frame));
+
+    const maxSize = { width: 500, height: 400 };
+    await page.inspector().startScreencast({ maxSize });
+    await page.goto(server.EMPTY_PAGE);
+    await page.evaluate(() => document.body.style.backgroundColor = 'red');
+    await rafraf(page, 100);
+    await page.inspector().stopScreencast();
+
+    expect(frames.length).toBeGreaterThan(0);
+    for (const frame of frames) {
+      // Each frame must be a valid JPEG (starts with FF D8)
+      expect(frame.data[0]).toBe(0xff);
+      expect(frame.data[1]).toBe(0xd8);
+      const { width, height } = jpegDimensions(frame.data);
+      // Frame should be scaled down to fit the maximum size.
+      expect(width).toBe(500);
+      expect(height).toBe(200);
+    }
+
+    await context.close();
+  });
+
+  it('startScreencast throws if already running', async ({ browser, trace }) => {
+    it.skip(trace === 'on', 'trace=on enables screencast with different options');
+
+    const size = { width: 500, height: 400 };
+    const context = await browser.newContext({ viewport: size });
+    const page = await context.newPage();
+
+    await page.inspector().startScreencast({ maxSize: size });
+    await expect(page.inspector().startScreencast({ maxSize: { width: 320, height: 240 } })).rejects.toThrow('Screencast is already running');
+
+    await page.inspector().stopScreencast();
+    await context.close();
+  });
+
+  it('startScreencast allows restart with different options after stop', async ({ browser, trace }) => {
+    it.skip(trace === 'on', 'trace=on enables screencast with different options');
+
+    const context = await browser.newContext({ viewport: { width: 500, height: 400 } });
+    const page = await context.newPage();
+
+    await page.inspector().startScreencast({ maxSize: { width: 500, height: 400 } });
+    await page.inspector().stopScreencast();
+    // Different options should succeed once the previous screencast is stopped.
+    await page.inspector().startScreencast({ maxSize: { width: 320, height: 240 } });
+    await page.inspector().stopScreencast();
+    await context.close();
+  });
+
+  it('startScreencast throws when video recording is running with different params', async ({ browser, trace }) => {
+    it.skip(trace === 'on', 'trace=on enables screencast with different options');
+
+    const videoSize = { width: 500, height: 400 };
+    const context = await browser.newContext({ viewport: videoSize });
+    const page = await context.newPage();
+
+    await page.video().start({ size: videoSize });
+    await expect(page.inspector().startScreencast({ maxSize: { width: 320, height: 240 } })).rejects.toThrow('Screencast is already running with different options');
+
+    await page.video().stop();
+    await context.close();
+  });
+
+  it('video.start does not emit screencastframe events', async ({ page, server, trace }) => {
+    it.skip(trace === 'on', 'trace=on enables screencast frame events');
+
+    const frames = [];
+    page.inspector().on('screencastframe', frame => frames.push(frame));
+
+    await page.video().start({ size: { width: 320, height: 240 } });
+    await page.goto(server.EMPTY_PAGE);
+    await page.evaluate(() => document.body.style.backgroundColor = 'red');
+    await rafraf(page, 100);
+    await page.video().stop();
+
+    expect(frames).toHaveLength(0);
+  });
 });
 
 it('should saveAs video', async ({ browser }, testInfo) => {
@@ -855,3 +1004,22 @@ it('should saveAs video', async ({ browser }, testInfo) => {
   await page.video().saveAs(saveAsPath);
   expect(fs.existsSync(saveAsPath)).toBeTruthy();
 });
+
+function jpegDimensions(buffer: Buffer): { width: number, height: number } {
+  let i = 2; // skip SOI marker (FF D8)
+  while (i < buffer.length - 8) {
+    if (buffer[i] !== 0xFF)
+      break;
+    const marker = buffer[i + 1];
+    const segmentLength = buffer.readUInt16BE(i + 2);
+    // SOF markers: C0 (baseline), C2 (progressive), C1, C3, C5-C7, C9-CB, CD-CF
+    if ((marker >= 0xC0 && marker <= 0xC3) || (marker >= 0xC5 && marker <= 0xC7) ||
+        (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF)) {
+      const height = buffer.readUInt16BE(i + 5);
+      const width = buffer.readUInt16BE(i + 7);
+      return { width, height };
+    }
+    i += 2 + segmentLength;
+  }
+  throw new Error('Could not parse JPEG dimensions');
+}

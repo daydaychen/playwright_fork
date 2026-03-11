@@ -49,12 +49,11 @@ export type HTMLReport = {
   projectNames: string[];
   startTime: number;
   duration: number;
-  shards: {
+  machines: {
     shardIndex?: number;
     tag: string[];
     startTime: number;
     duration: number;
-    suggestedWeight: number;
   }[];
   errors: string[];  // Top-level errors that are not attributed to any test.
   options: HTMLReportOptions;
@@ -89,6 +88,8 @@ export type TestCaseSummary = {
 
 export type TestResultSummary = {
   attachments: { name: string, contentType: string, path?: string }[];
+  startTime: string;
+  workerIndex: number;
 };
 
 export type TestCase = Omit<TestCaseSummary, 'results'> & {
@@ -111,6 +112,7 @@ export type TestResult = {
   attachments: TestAttachment[];
   status: 'passed' | 'failed' | 'timedOut' | 'skipped' | 'interrupted';
   annotations: TestAnnotation[];
+  workerIndex: number;
 };
 
 export type TestStep = {

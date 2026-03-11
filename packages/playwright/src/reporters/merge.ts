@@ -22,7 +22,7 @@ import { ZipFile } from 'playwright-core/lib/utils';
 import {  currentBlobReportVersion } from './blob';
 import { Multiplexer } from './multiplexer';
 import { JsonStringInternalizer, StringInternPool } from '../isomorphic/stringInternPool';
-import { TeleReporterReceiver } from '../isomorphic/teleReceiver';
+import { asFullConfig, asFullResult, TeleReporterReceiver } from '../isomorphic/teleReceiver';
 import { createReporters } from '../runner/reporters';
 import { relativeFilePath } from '../util';
 
@@ -37,8 +37,10 @@ type StatusCallback = (message: string) => void;
 type ReportData = {
   eventPatchers: JsonEventPatchers;
   reportFile: string;
+  zipFile: string;
   metadata: BlobReportMetadata;
-  tags: string[];
+  config: JsonConfig;
+  fullResult: JsonFullResult;
 };
 
 export async function createMergedReport(config: FullConfigInternal, dir: string, reporterDescriptions: ReporterDescription[], rootDirOverride: string | undefined) {
@@ -82,17 +84,29 @@ export async function createMergedReport(config: FullConfigInternal, dir: string
   };
 
   await dispatchEvents(eventData.prologue);
-  for (const { reportFile, eventPatchers, metadata, tags } of eventData.reports) {
+  let usedWorkers = 0;
+  for (const { reportFile, zipFile, eventPatchers, metadata, config, fullResult } of eventData.reports) {
+    multiplexer.onReportConfigure({
+      reportPath: zipFile,
+      config: asFullConfig(config),
+    });
     const reportJsonl = await fs.promises.readFile(reportFile);
     const events = parseTestEvents(reportJsonl);
     new JsonStringInternalizer(stringPool).traverse(events);
     eventPatchers.patchers.push(new AttachmentPathPatcher(dir));
     if (metadata.name)
       eventPatchers.patchers.push(new GlobalErrorPatcher(metadata.name));
-    if (tags.length)
-      eventPatchers.patchers.push(new GlobalErrorPatcher(tags.join(' ')));
+    if (config?.tags?.length)
+      eventPatchers.patchers.push(new GlobalErrorPatcher(config.tags.join(' ')));
+    const workerIndexPatcher = new WorkerIndexPatcher(usedWorkers);
+    eventPatchers.patchers.push(workerIndexPatcher);
     eventPatchers.patchEvents(events);
+    usedWorkers += workerIndexPatcher.usedWorkers();
     await dispatchEvents(events);
+    multiplexer.onReportEnd({
+      reportPath: zipFile,
+      result: asFullResult(fullResult),
+    });
   }
   await dispatchEvents(eventData.epilogue);
 }
@@ -134,7 +148,7 @@ function splitBufferLines(buffer: Buffer) {
 }
 
 async function extractAndParseReports(dir: string, shardFiles: string[], internalizer: JsonStringInternalizer, printStatus: StatusCallback) {
-  const shardEvents: { file: string, localPath: string, metadata: BlobReportMetadata, parsedEvents: JsonEvent[] }[] = [];
+  const shardEvents: { zipFile: string, reportFile: string, metadata: BlobReportMetadata, parsedEvents: JsonEvent[] }[] = [];
   await fs.promises.mkdir(path.join(dir, 'resources'), { recursive: true });
 
   const reportNames = new UniqueFileNameGenerator();
@@ -144,10 +158,10 @@ async function extractAndParseReports(dir: string, shardFiles: string[], interna
     const zipFile = new ZipFile(absolutePath);
     const entryNames = await zipFile.entries();
     for (const entryName of entryNames.sort()) {
-      let fileName = path.join(dir, entryName);
+      let reportFile = path.join(dir, entryName);
       const content = await zipFile.read(entryName);
       if (entryName.endsWith('.jsonl')) {
-        fileName = reportNames.makeUnique(fileName);
+        reportFile = reportNames.makeUnique(reportFile);
         let parsedEvents = parseCommonEvents(content);
         // Passing reviver to JSON.parse doesn't work, as the original strings
         // keep being used. To work around that we traverse the parsed events
@@ -156,13 +170,13 @@ async function extractAndParseReports(dir: string, shardFiles: string[], interna
         const metadata = findMetadata(parsedEvents, file);
         parsedEvents = modernizer.modernize(metadata.version, parsedEvents);
         shardEvents.push({
-          file,
-          localPath: fileName,
+          zipFile: absolutePath,
+          reportFile,
           metadata,
           parsedEvents
         });
       }
-      await fs.promises.writeFile(fileName, content);
+      await fs.promises.writeFile(reportFile, content);
     }
     zipFile.close();
   }
@@ -188,7 +202,7 @@ async function mergeEvents(dir: string, shardReportFiles: string[], stringPool: 
 
   const configureEvents: JsonOnConfigureEvent[] = [];
   const projectEvents: JsonOnProjectEvent[] = [];
-  const endEvents: { event: JsonOnEndEvent, metadata: BlobReportMetadata, tags: string[] }[] = [];
+  const endEvents: { event: JsonOnEndEvent, metadata: BlobReportMetadata }[] = [];
 
   const blobs = await extractAndParseReports(dir, shardReportFiles, internalizer, printStatus);
   // Sort by (report name; shard; file name), so that salt generation below is deterministic when:
@@ -204,7 +218,7 @@ async function mergeEvents(dir: string, shardReportFiles: string[], stringPool: 
     const shardB = b.metadata.shard?.current ?? 0;
     if (shardA !== shardB)
       return shardA - shardB;
-    return a.file.localeCompare(b.file);
+    return a.zipFile.localeCompare(b.zipFile);
   });
 
   printStatus(`merging events`);
@@ -214,7 +228,7 @@ async function mergeEvents(dir: string, shardReportFiles: string[], stringPool: 
 
   for (let i = 0; i < blobs.length; ++i) {
     // Generate unique salt for each blob.
-    const { parsedEvents, metadata, localPath } = blobs[i];
+    const { parsedEvents, metadata, reportFile, zipFile } = blobs[i];
     const eventPatchers = new JsonEventPatchers();
     eventPatchers.patchers.push(new IdsPatcher(
         stringPool,
@@ -227,24 +241,28 @@ async function mergeEvents(dir: string, shardReportFiles: string[], stringPool: 
       eventPatchers.patchers.push(new PathSeparatorPatcher(metadata.pathSeparator));
     eventPatchers.patchEvents(parsedEvents);
 
-    let tags: string[] = [];
+    let config: JsonConfig | undefined;
+    let fullResult: JsonFullResult | undefined;
     for (const event of parsedEvents) {
       if (event.method === 'onConfigure') {
         configureEvents.push(event);
-        tags = event.params.config.tags || [];
+        config = event.params.config;
       } else if (event.method === 'onProject') {
         projectEvents.push(event);
       } else if (event.method === 'onEnd') {
-        endEvents.push({ event, metadata, tags });
+        fullResult = event.params.result;
+        endEvents.push({ event, metadata });
       }
     }
 
     // Save information about the reports to stream their test events later.
     reports.push({
       eventPatchers,
-      reportFile: localPath,
+      reportFile,
+      zipFile,
       metadata,
-      tags,
+      config: config!,
+      fullResult: fullResult!,
     });
   }
 
@@ -272,6 +290,7 @@ function mergeConfigureEvents(configureEvents: JsonOnConfigureEvent[], rootDirOv
     maxFailures: 0,
     metadata: {
     },
+    shard: null,
     rootDir: '',
     version: '',
     workers: 0,
@@ -319,17 +338,17 @@ function mergeConfigs(to: JsonConfig, from: JsonConfig): JsonConfig {
       ...from.metadata,
       actualWorkers: (to.metadata.actualWorkers || 0) + (from.metadata.actualWorkers || 0),
     },
+    shard: null,
     workers: to.workers + from.workers,
   };
 }
 
-function mergeEndEvents(endEvents: { event: JsonOnEndEvent, metadata: BlobReportMetadata, tags: string[] }[]): JsonEvent {
+function mergeEndEvents(endEvents: { event: JsonOnEndEvent }[]): JsonEvent {
   let startTime = endEvents.length ? 10000000000000 : Date.now();
   let status: JsonFullResult['status'] = 'passed';
   let endTime: number = 0;
-  const shards: JsonFullResult['shards'] = [];
 
-  for (const { event, metadata, tags } of endEvents) {
+  for (const { event } of endEvents) {
     const shardResult = event.params.result;
     if (shardResult.status === 'failed')
       status = 'failed';
@@ -339,19 +358,11 @@ function mergeEndEvents(endEvents: { event: JsonOnEndEvent, metadata: BlobReport
       status = 'interrupted';
     startTime = Math.min(startTime, shardResult.startTime);
     endTime = Math.max(endTime, shardResult.startTime + shardResult.duration);
-
-    shards.push({
-      shardIndex: metadata.shard?.current,
-      tag: tags,
-      startTime: shardResult.startTime,
-      duration: shardResult.duration,
-    });
   }
   const result: JsonFullResult = {
     status,
     startTime,
     duration: endTime - startTime,
-    shards,
   };
   return {
     method: 'onEnd',
@@ -597,6 +608,26 @@ class GlobalErrorPatcher {
       error.message = this._prefix + error.message;
     if (error.stack !== undefined)
       error.stack = this._prefix + error.stack;
+  }
+}
+
+class WorkerIndexPatcher {
+  private _baseWorkerIndex: number;
+  private _maxWorkerIndex = 0;
+
+  constructor(baseWorkerIndex: number) {
+    this._baseWorkerIndex = baseWorkerIndex;
+  }
+
+  patchEvent(event: JsonEvent) {
+    if (event.method === 'onTestBegin') {
+      this._maxWorkerIndex = Math.max(this._maxWorkerIndex, event.params.result.workerIndex);
+      event.params.result.workerIndex += this._baseWorkerIndex;
+    }
+  }
+
+  usedWorkers() {
+    return this._maxWorkerIndex + 1;
   }
 }
 

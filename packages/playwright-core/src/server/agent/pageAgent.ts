@@ -45,12 +45,13 @@ export async function pageAgentPerform(progress: Progress, context: Context, use
   const task = `
 ### Instructions
 - Perform the following task on the page.
-- Your reply should be a tool call that performs action the page".
+- Your reply should be a tool call that performs action the page.
+- If you see text surrounded by <secret></secret>, it is a secret and you should preserve it as such. It will be replaced with the actual value before the tool call.
 
 ### Task
 ${userTask}
 `;
-
+  progress.disableTimeout();
   await runLoop(progress, context, performTools, task, undefined, callParams);
   await updateCache(context, cacheKey);
 }
@@ -63,12 +64,12 @@ export async function pageAgentExpect(progress: Progress, context: Context, expe
   const task = `
 ### Instructions
 - Call one of the "browser_expect_*" tools to verify / assert the condition.
-- You can call exactly one tool and it can't be report_results, must be one of the assertion tools.
+- If you see text surrounded by <secret></secret>, it is a secret and you should preserve it as such. It will be replaced with the actual value before the tool call.
 
 ### Expectation
 ${expectation}
 `;
-
+  progress.disableTimeout();
   await runLoop(progress, context, expectTools, task, undefined, callParams);
   await updateCache(context, cacheKey);
 }
@@ -78,6 +79,7 @@ export async function pageAgentExtract(progress: Progress, context: Context, que
   const task = `
 ### Instructions
 Extract the following information from the page. Do not perform any actions, just extract the information.
+If you see text surrounded by <secret></secret>, it is a secret and you should preserve it as such. It will be replaced with the actual value before the tool call.
 
 ### Query
 ${query}`;
@@ -88,19 +90,19 @@ ${query}`;
 async function runLoop(progress: Progress, context: Context, toolDefinitions: ToolDefinition[], userTask: string, resultSchema: loopTypes.Schema | undefined, params: CallParams): Promise<{
   result: any
 }> {
-  const { page } = context;
   if (!context.agentParams.api || !context.agentParams.model)
     throw new Error(`This action requires the API and API key to be set on the page agent. Did you mean to --run-agents=missing?`);
   if (!context.agentParams.apiKey)
     throw new Error(`This action requires API key to be set on the page agent.`);
+  if (context.agentParams.apiEndpoint && !URL.canParse(context.agentParams.apiEndpoint))
+    throw new Error(`Agent API endpoint "${context.agentParams.apiEndpoint}" is not a valid URL.`);
 
-  const { full } = await page.snapshotForAI(progress);
+  const snapshot = await context.takeSnapshot(progress);
   const { tools, callTool, reportedResult, refusedToPerformReason } = toolsForLoop(progress, context, toolDefinitions, { resultSchema, refuseToPerform: 'allow' });
-  const secrets = Object.fromEntries((context.agentParams.secrets || [])?.map(s => ([s.name, s.value])));
 
   const apiCacheTextBefore = context.agentParams.apiCacheFile ?
     await fs.promises.readFile(context.agentParams.apiCacheFile, 'utf-8').catch(() => '{}') : '{}';
-  const apiCacheBefore = JSON.parse(apiCacheTextBefore);
+  const apiCacheBefore = JSON.parse(apiCacheTextBefore || '{}');
 
   const loop = new Loop({
     api: context.agentParams.api as any,
@@ -115,7 +117,6 @@ async function runLoop(progress: Progress, context: Context, toolDefinitions: To
     debug,
     callTool,
     tools,
-    secrets,
     cache: apiCacheBefore,
     ...context.events,
   });
@@ -136,7 +137,7 @@ async function runLoop(progress: Progress, context: Context, toolDefinitions: To
     task.push('');
   }
   task.push('### Page snapshot');
-  task.push(full);
+  task.push(snapshot);
   task.push('');
 
   const { error, usage } = await loop.run(task.join('\n'), { signal: progress.signal });
@@ -205,7 +206,13 @@ const allCaches = new Map<string, Cache>();
 async function cachedActions(cacheFile: string): Promise<Cache> {
   let cache = allCaches.get(cacheFile);
   if (!cache) {
-    const json = await fs.promises.readFile(cacheFile, 'utf-8').then(text => JSON.parse(text)).catch(() => ({}));
+    const content = await fs.promises.readFile(cacheFile, 'utf-8').catch(() => '');
+    let json: any;
+    try {
+      json = JSON.parse(content.trim() || '{}');
+    } catch (error) {
+      throw new Error(`Failed to parse cache file ${cacheFile}:\n${error.message}`);
+    }
     const parsed = actions.cachedActionsSchema.safeParse(json);
     if (parsed.error)
       throw new Error(`Failed to parse cache file ${cacheFile}:\n${zod.prettifyError(parsed.error)}`);

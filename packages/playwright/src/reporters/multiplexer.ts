@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ReporterV2 } from './reporterV2';
+import type { ReportConfigureParams, ReportEndParams, ReporterV2 } from './reporterV2';
 import type { FullConfig, FullResult, TestCase, TestError, TestResult, TestStep } from '../../types/testReporter';
 import type { Suite } from '../common/test';
 
@@ -62,6 +62,16 @@ export class Multiplexer implements ReporterV2 {
   onTestEnd(test: TestCase, result: TestResult) {
     for (const reporter of this._reporters)
       wrap(() => reporter.onTestEnd?.(test, result));
+  }
+
+  onReportConfigure(params: ReportConfigureParams): void {
+    for (const reporter of this._reporters)
+      wrap(() => reporter.onReportConfigure?.(params));
+  }
+
+  onReportEnd(params: ReportEndParams): void {
+    for (const reporter of this._reporters)
+      wrap(() => reporter.onReportEnd?.(params));
   }
 
   async onEnd(result: FullResult) {

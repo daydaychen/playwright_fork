@@ -25,9 +25,12 @@ import { RequestDispatcher } from './networkDispatchers';
 import { ResponseDispatcher } from './networkDispatchers';
 import { RouteDispatcher, WebSocketDispatcher } from './networkDispatchers';
 import { WebSocketRouteDispatcher } from './webSocketRouteDispatcher';
+import { DisposableDispatcher } from './disposableDispatcher';
 import { SdkObject } from '../instrumentation';
-import { urlMatches } from '../../utils/isomorphic/urlMatch';
+import { deserializeURLMatch, urlMatches } from '../../utils/isomorphic/urlMatch';
 import { PageAgentDispatcher } from './pageAgentDispatcher';
+import { Recorder } from '../recorder';
+import { disposeAll } from '../disposable';
 
 import type { Artifact } from '../artifact';
 import type { BrowserContext } from '../browserContext';
@@ -38,9 +41,13 @@ import type { JSHandle } from '../javascript';
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { Frame } from '../frames';
 import type { RouteHandler } from '../network';
-import type { InitScript, PageBinding } from '../page';
+import type { InitScript } from '../page';
+import type { Disposable } from '../disposable';
 import type * as channels from '@protocol/channels';
 import type { Progress } from '@protocol/progress';
+import type { URLMatch } from '../../utils/isomorphic/urlMatch';
+import type { ScreencastFrame } from '../types';
+import type { ScreencastListener } from '../screencast';
 
 export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, BrowserContextDispatcher> implements channels.PageChannel {
   _type_EventTarget = true;
@@ -48,14 +55,14 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   private _page: Page;
   _subscriptions = new Set<channels.PageUpdateSubscriptionParams['event']>();
   _webSocketInterceptionPatterns: channels.PageSetWebSocketInterceptionPatternsParams['patterns'] = [];
-  private _bindings: PageBinding[] = [];
-  private _initScripts: InitScript[] = [];
+  private _disposables: Disposable[] = [];
   private _requestInterceptor: RouteHandler;
-  private _interceptionUrlMatchers: (string | RegExp)[] = [];
+  private _interceptionUrlMatchers: URLMatch[] = [];
   private _routeWebSocketInitScript: InitScript | undefined;
   private _locatorHandlers = new Set<number>();
   private _jsCoverageActive = false;
   private _cssCoverageActive = false;
+  private _screencastListener: ScreencastListener | null = null;
 
   static from(parentScope: BrowserContextDispatcher, page: Page): PageDispatcher {
     return PageDispatcher.fromNullable(parentScope, page)!;
@@ -79,7 +86,8 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
       mainFrame,
       viewportSize: page.emulatedSize()?.viewport,
       isClosed: page.isClosed(),
-      opener: PageDispatcher.fromNullable(parentScope, page.opener())
+      opener: PageDispatcher.fromNullable(parentScope, page.opener()),
+      video: page.video ? createVideoDispatcher(parentScope, page.video) : undefined
     });
 
     this.adopt(mainFrame);
@@ -113,9 +121,6 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     this.addObjectListener(Page.Events.LocatorHandlerTriggered, (uid: number) => this._dispatchEvent('locatorHandlerTriggered', { uid }));
     this.addObjectListener(Page.Events.WebSocket, webSocket => this._dispatchEvent('webSocket', { webSocket: new WebSocketDispatcher(this, webSocket) }));
     this.addObjectListener(Page.Events.Worker, worker => this._dispatchEvent('worker', { worker: new WorkerDispatcher(this, worker) }));
-    this.addObjectListener(Page.Events.Video, (artifact: Artifact) => this._dispatchEvent('video', { artifact: ArtifactDispatcher.from(parentScope, artifact) }));
-    if (page.video)
-      this._dispatchEvent('video', { artifact: ArtifactDispatcher.from(this.parentScope(), page.video) });
     // Ensure client knows about all frames.
     const frames = page.frameManager.frames();
     for (let i = 1; i < frames.length; i++)
@@ -126,7 +131,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     return this._page;
   }
 
-  async exposeBinding(params: channels.PageExposeBindingParams, progress: Progress): Promise<void> {
+  async exposeBinding(params: channels.PageExposeBindingParams, progress: Progress): Promise<channels.PageExposeBindingResult> {
     const binding = await this._page.exposeBinding(progress, params.name, !!params.needsHandle, (source, ...args) => {
       // When reusing the context, we might have some bindings called late enough,
       // after context and page dispatchers have been disposed.
@@ -136,7 +141,8 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
       this._dispatchEvent('bindingCall', { binding });
       return binding.promise();
     });
-    this._bindings.push(binding);
+    this._disposables.push(binding);
+    return { disposable: new DisposableDispatcher(this, binding) };
   }
 
   async setExtraHTTPHeaders(params: channels.PageSetExtraHTTPHeadersParams, progress: Progress): Promise<void> {
@@ -188,8 +194,10 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     await this._page.setViewportSize(progress, params.viewportSize);
   }
 
-  async addInitScript(params: channels.PageAddInitScriptParams, progress: Progress): Promise<void> {
-    this._initScripts.push(await this._page.addInitScript(progress, params.source));
+  async addInitScript(params: channels.PageAddInitScriptParams, progress: Progress): Promise<channels.PageAddInitScriptResult> {
+    const initScript = await this._page.addInitScript(params.source);
+    this._disposables.push(initScript);
+    return { disposable: new DisposableDispatcher(this, initScript) };
   }
 
   async setNetworkInterceptionPatterns(params: channels.PageSetNetworkInterceptionPatternsParams, progress: Progress): Promise<void> {
@@ -201,7 +209,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
         await this._page.removeRequestInterceptor(this._requestInterceptor);
       this._interceptionUrlMatchers = [];
     } else {
-      this._interceptionUrlMatchers = params.patterns.map(pattern => pattern.regexSource ? new RegExp(pattern.regexSource, pattern.regexFlags!) : pattern.glob!);
+      this._interceptionUrlMatchers = params.patterns.map(deserializeURLMatch);
       if (!hadMatchers)
         await this._page.addRequestInterceptor(progress, this._requestInterceptor);
     }
@@ -273,12 +281,20 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     await this._page.keyboard.press(progress, params.key, params);
   }
 
+  async clearConsoleMessages(params: channels.PageClearConsoleMessagesParams, progress: Progress): Promise<channels.PageClearConsoleMessagesResult> {
+    this._page.clearConsoleMessages();
+  }
+
   async consoleMessages(params: channels.PageConsoleMessagesParams, progress: Progress): Promise<channels.PageConsoleMessagesResult> {
     // Send all future console messages to the client, so that it can reliably receive all of them.
     // Otherwise, if subscription is added in a different task from this call (either before or after),
     // there is a chance for a duplicate or a lost console message.
     this._subscriptions.add('console');
     return { messages: this._page.consoleMessages().map(message => this.parentScope().serializeConsoleMessage(message, this)) };
+  }
+
+  async clearPageErrors(params: channels.PageClearPageErrorsParams, progress: Progress): Promise<channels.PageClearPageErrorsResult> {
+    this._page.clearPageErrors();
   }
 
   async pageErrors(params: channels.PagePageErrorsParams, progress: Progress): Promise<channels.PagePageErrorsResult> {
@@ -337,6 +353,47 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     await progress.race(this._page.bringToFront());
   }
 
+  async pickLocator(params: channels.PagePickLocatorParams, progress: Progress): Promise<channels.PagePickLocatorResult> {
+    const recorder = await Recorder.forContext(this._page.browserContext, { omitCallTracking: true, hideToolbar: true });
+    const selector = await recorder.pickLocator(progress);
+    return { selector };
+  }
+
+  async cancelPickLocator(params: channels.PageCancelPickLocatorParams, progress: Progress): Promise<void> {
+    const recorder = await Recorder.existingForContext(this._page.browserContext);
+    await recorder?.setMode('none');
+  }
+
+  async startScreencast(params: channels.PageStartScreencastParams, progress?: Progress): Promise<channels.PageStartScreencastResult> {
+    if (this._screencastListener)
+      throw new Error('Screencast is already running');
+    const size = params.maxSize || { width: 800, height: 800 };
+    this._screencastListener = (frame: ScreencastFrame) => {
+      this._dispatchEvent('screencastFrame', { data: frame.buffer });
+    };
+    await this._page.screencast.startScreencast(this._screencastListener, { quality: 90, width: size.width, height: size.height });
+  }
+
+  async stopScreencast(params: channels.PageStopScreencastParams, progress?: Progress): Promise<channels.PageStopScreencastResult> {
+    await this._stopScreencast();
+  }
+
+  private async _stopScreencast() {
+    const listener = this._screencastListener;
+    this._screencastListener = null;
+    if (listener)
+      await this._page.screencast.stopScreencast(listener);
+  }
+
+  async videoStart(params: channels.PageVideoStartParams, progress: Progress): Promise<channels.PageVideoStartResult> {
+    const artifact = await this._page.screencast.startExplicitVideoRecording(params);
+    return { artifact: createVideoDispatcher(this.parentScope(), artifact) };
+  }
+
+  async videoStop(params: channels.PageVideoStopParams, progress: Progress): Promise<channels.PageVideoStopResult> {
+    await this._page.screencast.stopExplicitVideoRecording();
+  }
+
   async startJSCoverage(params: channels.PageStartJSCoverageParams, progress: Progress): Promise<void> {
     const coverage = this._page.coverage as CRCoverage;
     await coverage.startJSCoverage(progress, params);
@@ -381,10 +438,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     // Cleanup properly and leave the page in a good state. Other clients may still connect and use it.
     this._interceptionUrlMatchers = [];
     this._page.removeRequestInterceptor(this._requestInterceptor).catch(() => {});
-    this._page.removeExposedBindings(this._bindings).catch(() => {});
-    this._bindings = [];
-    this._page.removeInitScripts(this._initScripts).catch(() => {});
-    this._initScripts = [];
+    disposeAll(this._disposables).catch(() => {});
     if (this._routeWebSocketInitScript)
       WebSocketRouteDispatcher.uninstall(this.connection, this._page, this._routeWebSocketInitScript).catch(() => {});
     this._routeWebSocketInitScript = undefined;
@@ -398,6 +452,11 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
     if (this._cssCoverageActive)
       (this._page.coverage as CRCoverage).stopCSSCoverage().catch(() => {});
     this._cssCoverageActive = false;
+    this._stopScreencast().catch(() => {});
+  }
+
+  async setDockTile(params: channels.PageSetDockTileParams): Promise<void> {
+    await this._page.setDockTile(params.image);
   }
 }
 
@@ -471,4 +530,10 @@ export class BindingCallDispatcher extends Dispatcher<SdkObject, channels.Bindin
     this._reject!(parseError(params.error));
     this._dispose();
   }
+}
+
+function createVideoDispatcher(parentScope: BrowserContextDispatcher, video: Artifact): ArtifactDispatcher {
+  // Note: Video must outlive Page and BrowserContext, so that client can saveAs it
+  // after closing the context. We use |scope| for it.
+  return ArtifactDispatcher.from(parentScope.parentScope(), video);
 }

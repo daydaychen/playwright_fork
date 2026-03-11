@@ -385,7 +385,7 @@ test('should respect --trace', async ({ runInlineTest }, testInfo) => {
   expect(fs.existsSync(testInfo.outputPath('test-results', 'a-test-1', 'trace.zip'))).toBeTruthy();
 });
 
-for (const mode of ['off', 'retain-on-failure', 'on-first-retry', 'on-all-retries', 'retain-on-first-failure']) {
+for (const mode of ['off', 'retain-on-failure', 'on-first-retry', 'on-all-retries', 'retain-on-first-failure', 'retain-on-failure-and-retries']) {
   test(`trace:${mode} should not create trace zip artifact if page test passed`, async ({ runInlineTest }) => {
     const result = await runInlineTest({
       'a.spec.ts': `
@@ -1152,6 +1152,46 @@ test('trace:retain-on-first-failure should create trace if request context is di
   expect(result.failed).toBe(1);
 });
 
+test('trace:retain-on-failure-and-retries should keep all traces when test is flaky', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('flaky', async ({ page }) => {
+        await page.goto('about:blank');
+        expect(test.info().retry).toBe(1);
+      });
+    `,
+  }, { trace: 'retain-on-failure-and-retries', retries: 1 });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.flaky).toBe(1);
+
+  const firstRunTracePath = testInfo.outputPath('test-results', 'a-flaky', 'trace.zip');
+  expect(fs.existsSync(firstRunTracePath)).toBeTruthy();
+  const retryTracePath = testInfo.outputPath('test-results', 'a-flaky-retry1', 'trace.zip');
+  expect(fs.existsSync(retryTracePath)).toBeTruthy();
+});
+
+test('trace:retain-on-failure-and-retries should keep all traces when test fails on retries', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('fail', async ({ page }) => {
+        await page.goto('about:blank');
+        expect(true).toBe(false);
+      });
+    `,
+  }, { trace: 'retain-on-failure-and-retries', retries: 1 });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+
+  const firstRunTracePath = testInfo.outputPath('test-results', 'a-fail', 'trace.zip');
+  expect(fs.existsSync(firstRunTracePath)).toBeTruthy();
+  const retryTracePath = testInfo.outputPath('test-results', 'a-fail-retry1', 'trace.zip');
+  expect(fs.existsSync(retryTracePath)).toBeTruthy();
+});
+
 test('should not corrupt actions when no library trace is present', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'a.spec.ts': `
@@ -1348,4 +1388,35 @@ test('should record trace snapshot for more obscure commands', async ({ runInlin
   expect(boundingBoxAction.afterSnapshot).toBeTruthy();
   expect(trace.snapshots.snapshotByName(snapshotFrameOrPageId, boundingBoxAction.beforeSnapshot)).toBeTruthy();
   expect(trace.snapshots.snapshotByName(snapshotFrameOrPageId, boundingBoxAction.afterSnapshot)).toBeTruthy();
+});
+
+test('should record default test timeout in trace', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('pass', async ({}) => {
+      });
+    `,
+  }, { trace: 'on' });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+  const trace = await parseTrace(testInfo.outputPath('test-results', 'a-pass', 'trace.zip'));
+  expect(trace.model.testTimeout).toBe(30_000);
+});
+
+test('should record custom test timeout in trace', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('pass', async ({}) => {
+        test.setTimeout(120_000);
+      });
+    `,
+  }, { trace: 'on' });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+  const trace = await parseTrace(testInfo.outputPath('test-results', 'a-pass', 'trace.zip'));
+  expect(trace.model.testTimeout).toBe(120_000);
 });

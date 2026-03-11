@@ -40,7 +40,7 @@ export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChann
   private _isolatedContexts = new Set<BrowserContext>();
 
   constructor(scope: BrowserTypeDispatcher, browser: Browser, options: BrowserDispatcherOptions = {}) {
-    super(scope, browser, 'Browser', { version: browser.version(), name: browser.options.name });
+    super(scope, browser, 'Browser', { version: browser.version(), name: browser.options.name, browserName: browser.options.browserType });
     this._options = options;
 
     if (!options.isolateContexts) {
@@ -112,7 +112,7 @@ export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChann
 
   async newBrowserCDPSession(params: channels.BrowserNewBrowserCDPSessionParams, progress: Progress): Promise<channels.BrowserNewBrowserCDPSessionResult> {
     // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
-    if (!this._object.options.isChromium)
+    if (this._object.options.browserType !== 'chromium')
       throw new Error(`CDP session is only available in Chromium`);
     const crBrowser = this._object as CRBrowser;
     return { session: new CDPSessionDispatcher(this, await crBrowser.newBrowserCDPSession()) };
@@ -120,7 +120,7 @@ export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChann
 
   async startTracing(params: channels.BrowserStartTracingParams, progress: Progress): Promise<void> {
     // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
-    if (!this._object.options.isChromium)
+    if (this._object.options.browserType !== 'chromium')
       throw new Error(`Tracing is only available in Chromium`);
     const crBrowser = this._object as CRBrowser;
     await crBrowser.startTracing(params.page ? (params.page as PageDispatcher)._object : undefined, params);
@@ -128,10 +128,18 @@ export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChann
 
   async stopTracing(params: channels.BrowserStopTracingParams, progress: Progress): Promise<channels.BrowserStopTracingResult> {
     // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
-    if (!this._object.options.isChromium)
+    if (this._object.options.browserType !== 'chromium')
       throw new Error(`Tracing is only available in Chromium`);
     const crBrowser = this._object as CRBrowser;
     return { artifact: ArtifactDispatcher.from(this, await crBrowser.stopTracing()) };
+  }
+
+  async startServer(params: channels.BrowserStartServerParams, progress: Progress): Promise<channels.BrowserStartServerResult> {
+    return await this._object.startServer(params.title, params);
+  }
+
+  async stopServer(params: channels.BrowserStopServerParams, progress: Progress): Promise<void> {
+    await this._object.stopServer();
   }
 
   async cleanupContexts() {

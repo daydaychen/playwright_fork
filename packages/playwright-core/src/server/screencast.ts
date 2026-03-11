@@ -15,24 +15,28 @@
  */
 
 import path from 'path';
-import { assert, createGuid, eventsHelper, RegisteredListener } from '../utils';
+import { assert, createGuid } from '../utils';
 import { debugLogger } from '../utils';
 import { VideoRecorder } from './videoRecorder';
 import { Page } from './page';
 import { registry } from './registry';
+import { validateVideoSize } from './browserContext';
 
 import type * as types from './types';
+
+export type ScreencastListener = (frame: types.ScreencastFrame) => void;
 
 export class Screencast {
   private _page: Page;
   private _videoRecorder: VideoRecorder | null = null;
   private _videoId: string | null = null;
-  private _screencastClients = new Set<unknown>();
+  private _listeners = new Set<ScreencastListener>();
+  private _screencastOptions: { width: number, height: number, quality: number } | null = null;
 
   // Aiming at 25 fps by default - each frame is 40ms, but we give some slack with 35ms.
   // When throttling for tracing, 200ms between frames, except for 10 frames around the action.
   private _frameThrottler = new FrameThrottler(10, 35, 200);
-  private _frameListener: RegisteredListener | null = null;
+  private _videoFrameListener: ScreencastListener | null = null;
 
   constructor(page: Page) {
     this._page = page;
@@ -42,9 +46,16 @@ export class Screencast {
     this._frameThrottler.dispose();
   }
 
-  setOptions(options: { width: number, height: number, quality: number } | null) {
-    this._setOptions(options).catch(e => debugLogger.log('error', e));
-    this._frameThrottler.setThrottlingEnabled(!!options);
+  startForTracing(listener: ScreencastListener) {
+    // If screencast is already running, use the same options, it's ok for tracing.
+    const options = this._screencastOptions || { width: 800, height: 800, quality: 90 };
+    this.startScreencast(listener, options).catch(e => debugLogger.log('error', e));
+    this._frameThrottler.setThrottlingEnabled(true);
+  }
+
+  stopForTracing(listener: ScreencastListener) {
+    this.stopScreencast(listener).catch(e => debugLogger.log('error', e));
+    this._frameThrottler.setThrottlingEnabled(false);
   }
 
   throttleFrameAck(ack: () => void) {
@@ -56,23 +67,30 @@ export class Screencast {
     this._frameThrottler.recharge();
   }
 
-  launchVideoRecorder(): types.VideoOptions | undefined {
+  // Note: it is important to start video recorder before sending Screencast.startScreencast,
+  // and it is equally important to send Screencast.startScreencast before sending Target.resume.
+  launchAutomaticVideoRecorder(): types.VideoOptions | undefined {
     const recordVideo = this._page.browserContext._options.recordVideo;
     if (!recordVideo)
-      return undefined;
+      return;
+    // validateBrowserContextOptions ensures correct video size.
+    return this._launchVideoRecorder(recordVideo.dir, recordVideo.size!);
+  }
+
+  private _launchVideoRecorder(dir: string, size: { width: number, height: number }): types.VideoOptions {
     assert(!this._videoId);
+    // Do this first, it likes to throw.
+    const ffmpegPath = registry.findExecutable('ffmpeg')!.executablePathOrDie(this._page.browserContext._browser.sdkLanguage());
+
     this._videoId = createGuid();
-    const outputFile = path.join(recordVideo.dir, this._videoId + '.webm');
+    const outputFile = path.join(dir, this._videoId + '.webm');
     const videoOptions = {
-      // validateBrowserContextOptions ensures correct video size.
-      ...recordVideo.size!,
+      ...size,
       outputFile,
     };
-    // Note: it is important to start video recorder before sending Screencast.startScreencast,
-    // and it is equally important to send Screencast.startScreencast before sending Target.resume.
-    const ffmpegPath = registry.findExecutable('ffmpeg')!.executablePathOrDie(this._page.browserContext._browser.sdkLanguage());
+
     this._videoRecorder = new VideoRecorder(ffmpegPath, videoOptions);
-    this._frameListener = eventsHelper.addEventListener(this._page, Page.Events.ScreencastFrame, frame => this._videoRecorder!.writeFrame(frame.buffer, frame.frameSwapWallTime / 1000));
+    this._videoFrameListener = frame => this._videoRecorder!.writeFrame(frame.buffer, frame.frameSwapWallTime / 1000);
     this._page.waitForInitializedOrError().then(p => {
       if (p instanceof Error)
         this.stopVideoRecording().catch(() => {});
@@ -84,29 +102,24 @@ export class Screencast {
     const videoId = this._videoId;
     assert(videoId);
     this._page.once(Page.Events.Close, () => this.stopVideoRecording().catch(() => {}));
-    const gotFirstFrame = new Promise(f => this._page.once(Page.Events.ScreencastFrame, f));
-    await this._startScreencast(this._videoRecorder, {
+    await this.startScreencast(this._videoFrameListener!, {
       quality: 90,
       width: options.width,
       height: options.height,
     });
-    // Wait for the first frame before reporting video to the client.
-    gotFirstFrame.then(() => {
-      this._page.browserContext._browser._videoStarted(this._page.browserContext, videoId, options.outputFile, this._page.waitForInitializedOrError());
-    });
+    return this._page.browserContext._browser._videoStarted(this._page, videoId, options.outputFile);
   }
 
   async stopVideoRecording(): Promise<void> {
     if (!this._videoId)
       return;
-    if (this._frameListener)
-      eventsHelper.removeEventListeners([this._frameListener]);
-    this._frameListener = null;
+    const videoFrameListener = this._videoFrameListener!;
+    this._videoFrameListener = null;
     const videoId = this._videoId;
     this._videoId = null;
     const videoRecorder = this._videoRecorder!;
     this._videoRecorder = null;
-    await this._stopScreencast(videoRecorder);
+    await this.stopScreencast(videoFrameListener);
     await videoRecorder.stop();
     // Keep the video artifact in the map until encoding is fully finished, if the context
     // starts closing before the video is fully written to disk it will wait for it.
@@ -114,16 +127,28 @@ export class Screencast {
     video?.reportFinished();
   }
 
-  private async _setOptions(options: { width: number, height: number, quality: number } | null): Promise<void> {
-    if (options)
-      await this._startScreencast(this, options);
-    else
-      await this._stopScreencast(this);
+  async startExplicitVideoRecording(options: { size?: types.Size } = {}) {
+    if (this._videoId)
+      throw new Error('Video is already being recorded');
+    const size = validateVideoSize(options.size, this._page.emulatedSize()?.viewport);
+    const videoOptions = this._launchVideoRecorder(this._page.browserContext._browser.options.artifactsDir, size);
+    return await this.startVideoRecording(videoOptions);
   }
 
-  private async _startScreencast(client: unknown, options: { width: number, height: number, quality: number }) {
-    this._screencastClients.add(client);
-    if (this._screencastClients.size === 1) {
+  async stopExplicitVideoRecording() {
+    if (!this._videoId)
+      throw new Error('Video is not being recorded');
+    await this.stopVideoRecording();
+  }
+
+  async startScreencast(listener: ScreencastListener, options: { width: number, height: number, quality: number }) {
+    if (this._screencastOptions) {
+      if (options.width !== this._screencastOptions.width || options.height !== this._screencastOptions.height || options.quality !== this._screencastOptions.quality)
+        throw new Error(`Screencast is already running with different options (${this._screencastOptions.width}x${this._screencastOptions.height} quality=${this._screencastOptions.quality})`);
+    }
+    this._listeners.add(listener);
+    if (this._listeners.size === 1) {
+      this._screencastOptions = options;
       await this._page.delegate.startScreencast({
         width: options.width,
         height: options.height,
@@ -132,10 +157,17 @@ export class Screencast {
     }
   }
 
-  private async _stopScreencast(client: unknown) {
-    this._screencastClients.delete(client);
-    if (!this._screencastClients.size)
+  async stopScreencast(listener: ScreencastListener) {
+    this._listeners.delete(listener);
+    if (!this._listeners.size) {
+      this._screencastOptions = null;
       await this._page.delegate.stopScreencast();
+    }
+  }
+
+  onScreencastFrame(frame: types.ScreencastFrame) {
+    for (const listener of this._listeners)
+      listener(frame);
   }
 }
 

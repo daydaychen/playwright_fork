@@ -50,7 +50,7 @@ test('browser_take_screenshot (element)', async ({ startClient, server }, testIn
     name: 'browser_navigate',
     arguments: { url: server.HELLO_WORLD },
   })).toHaveResponse({
-    pageState: expect.stringContaining(`[ref=e1]`),
+    snapshot: expect.stringContaining(`[ref=e1]`),
   });
 
   expect(await client.callTool({
@@ -219,11 +219,7 @@ test('browser_take_screenshot (filename is empty string)', async ({ startClient,
 });
 
 
-test('browser_take_screenshot (filename: "output.png")', async ({ startClient, server }, testInfo) => {
-  const outputDir = testInfo.outputPath('output');
-  const { client } = await startClient({
-    config: { outputDir },
-  });
+test('browser_take_screenshot (filename: "output.png")', async ({ client, server }, testInfo) => {
   expect(await client.callTool({
     name: 'browser_navigate',
     arguments: { url: server.HELLO_WORLD },
@@ -250,9 +246,7 @@ test('browser_take_screenshot (filename: "output.png")', async ({ startClient, s
     ],
   });
 
-  const files = [...fs.readdirSync(outputDir)].filter(f => f.endsWith('.png'));
-
-  expect(fs.existsSync(outputDir)).toBeTruthy();
+  const files = [...fs.readdirSync(testInfo.outputPath())].filter(f => f.endsWith('.png'));
   expect(files).toHaveLength(1);
   expect(files[0]).toMatch(/^output\.png$/);
 });
@@ -363,7 +357,7 @@ test('browser_take_screenshot (fullPage with element should error)', async ({ st
     name: 'browser_navigate',
     arguments: { url: server.HELLO_WORLD },
   })).toHaveResponse({
-    pageState: expect.stringContaining(`[ref=e1]`),
+    snapshot: expect.stringContaining(`[ref=e1]`),
   });
 
   const result = await client.callTool({
@@ -391,7 +385,7 @@ test('browser_take_screenshot (viewport without snapshot)', async ({ startClient
       action: 'list',
     },
   })).toHaveResponse({
-    tabs: `- 0: (current) [] (about:blank)`,
+    result: `- 0: (current) [](about:blank)`,
   });
 
   // This should work without requiring a snapshot since it's a viewport screenshot

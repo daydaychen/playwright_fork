@@ -196,16 +196,36 @@ test('expect timeout during run', async ({ context }) => {
   {
     const { page, agent } = await runAgent(context);
     await page.setContent(`<button hidden>Submit</button>`);
-    const error = await agent.expect('submit button is visible', { timeout: 10000 }).catch(e => e);
+    const error = await agent.expect('submit button is visible', { timeout: 3000 }).catch(e => e);
     expect(stripAnsi(error.message)).toContain(`pageAgent.expect: expect(locator).toBeVisible() failed
 
 Locator: getByRole('button', { name: 'Submit' })
 Expected: visible
-Timeout: 5000ms
+Timeout: 3000ms
 Error: element(s) not found
 
 Call log:
-  - Expect Visible with timeout 5000ms`);
+  - Expect Visible with timeout 3000ms`);
+  }
+});
+
+test('expect timeout during run from agent options', async ({ context }) => {
+  {
+    const { page, agent } = await generateAgent(context);
+    await page.setContent(`<button>Submit</button>`);
+    await agent.expect('submit button is visible');
+  }
+  expect(await cacheObject()).toEqual({
+    'submit button is visible': {
+      actions: [expect.objectContaining({ method: 'expectVisible' })],
+    },
+  });
+  {
+    const { page, agent } = await runAgent(context, { expect: { timeout: 3000 } });
+    await page.setContent(`<button hidden>Submit</button>`);
+    const error = await agent.expect('submit button is visible').catch(e => e);
+    expect(stripAnsi(error.message)).toContain(`pageAgent.expect: expect(locator).toBeVisible() failed`);
+    expect(stripAnsi(error.message)).toContain(`Expect Visible with timeout 3000ms`);
   }
 });
 
@@ -221,77 +241,127 @@ Call log:
 });
 
 test('expectURL success', async ({ context, server }) => {
+  const secrets = {
+    SERVER: server.PREFIX
+  };
   {
-    const { page, agent } = await generateAgent(context);
-    await page.goto(server.PREFIX + '/page.html');
-    await agent.expect('page URL is /page.html');
+    const { page, agent } = await generateAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/counter.html');
+    await agent.expect('page URL is /counter.html');
   }
   expect(await cacheObject()).toEqual({
-    'page URL is /page.html': {
+    'page URL is /counter.html': {
       actions: [expect.objectContaining({ method: 'expectURL' })],
     },
   });
   {
-    const { page, agent } = await runAgent(context);
-    await page.goto(server.PREFIX + '/page.html');
-    await agent.expect('page URL is /page.html');
+    const { page, agent } = await runAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/counter.html');
+    await agent.expect('page URL is /counter.html');
   }
 });
 
 test('expectURL wrong URL error', async ({ context, server }) => {
+  const secrets = {
+    SERVER: server.PREFIX
+  };
   {
-    const { page, agent } = await generateAgent(context);
-    await page.goto(server.PREFIX + '/other.html');
-    await agent.expect('page URL is /other.html');
+    const { page, agent } = await generateAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/counter.html');
+    await agent.expect('page URL is /counter.html');
   }
   expect(await cacheObject()).toEqual({
-    'page URL is /other.html': {
+    'page URL is /counter.html': {
       actions: [expect.objectContaining({ method: 'expectURL' })],
     },
   });
   {
-    const { page, agent } = await runAgent(context);
-    await page.goto(server.PREFIX + '/page.html');
-    const error = await agent.expect('page URL is /other.html').catch(e => e);
+    const { page, agent } = await runAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/empty.html');
+    const error = await agent.expect('page URL is /counter.html').catch(e => e);
     expect(stripAnsi(error.message)).toContain(`pageAgent.expect: expect(page).toHaveURL(expected) failed`);
-    expect(stripAnsi(error.message)).toContain(`Received: ${server.PREFIX}/page.html`);
+    expect(stripAnsi(error.message)).toContain(`Received: <secret>SERVER</secret>/empty.html`);
   }
 });
 
 test('expectURL with regex', async ({ context, server }) => {
+  const secrets = {
+    SERVER: server.PREFIX
+  };
   {
-    const { page, agent } = await generateAgent(context);
-    await page.goto(server.PREFIX + '/page.html');
-    await agent.expect('page URL matches /page pattern');
+    const { page, agent } = await generateAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/counter.html');
+    await agent.expect('page URL matches /counter pattern');
   }
   expect(await cacheObject()).toEqual({
-    'page URL matches /page pattern': {
-      actions: [expect.objectContaining({ method: 'expectURL' })],
+    'page URL matches /counter pattern': {
+      actions: [expect.objectContaining({ method: 'expectURL', regex: expect.any(String) })],
     },
   });
   {
-    const { page, agent } = await runAgent(context);
-    await page.goto(server.PREFIX + '/page.html');
-    await agent.expect('page URL matches /page pattern');
+    const { page, agent } = await runAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/counter.html');
+    await agent.expect('page URL matches /counter pattern');
   }
 });
 
 test('expectURL with regex error', async ({ context, server }) => {
+  const secrets = {
+    SERVER: server.PREFIX
+  };
   {
-    const { page, agent } = await generateAgent(context);
-    await page.goto(server.PREFIX + '/other.html');
-    await agent.expect('page URL matches /other pattern');
+    const { page, agent } = await generateAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/counter.html');
+    await agent.expect('page URL matches /counter pattern');
   }
   expect(await cacheObject()).toEqual({
-    'page URL matches /other pattern': {
-      actions: [expect.objectContaining({ method: 'expectURL' })],
+    'page URL matches /counter pattern': {
+      actions: [expect.objectContaining({ method: 'expectURL', regex: expect.any(String) })],
+    },
+  });
+  {
+    const { page, agent } = await runAgent(context, { secrets });
+    await page.goto(server.PREFIX + '/empty.html');
+    const error = await agent.expect('page URL matches /counter pattern').catch(e => e);
+    expect(stripAnsi(error.message)).toContain(`pageAgent.expect: expect(page).toHaveURL(expected) failed`);
+    expect(stripAnsi(error.message)).toContain(`Received: <secret>SERVER</secret>/empty.html`);
+  }
+});
+
+test('expectTitle success', async ({ context }) => {
+  {
+    const { page, agent } = await generateAgent(context);
+    await page.setContent(`<title>My Page Title</title>`);
+    await agent.expect('page title is "My Page Title"');
+  }
+  expect(await cacheObject()).toEqual({
+    'page title is "My Page Title"': {
+      actions: [expect.objectContaining({ method: 'expectTitle' })],
     },
   });
   {
     const { page, agent } = await runAgent(context);
-    await page.goto(server.PREFIX + '/page.html');
-    const error = await agent.expect('page URL matches /other pattern').catch(e => e);
-    expect(stripAnsi(error.message)).toContain(`pageAgent.expect: expect(page).toHaveURL(expected) failed`);
-    expect(stripAnsi(error.message)).toContain(`Received: ${server.PREFIX}/page.html`);
+    await page.setContent(`<title>My Page Title</title>`);
+    await agent.expect('page title is "My Page Title"');
+  }
+});
+
+test('expectTitle wrong title error', async ({ context }) => {
+  {
+    const { page, agent } = await generateAgent(context);
+    await page.setContent(`<title>Other Title</title>`);
+    await agent.expect('page title is "Other Title"');
+  }
+  expect(await cacheObject()).toEqual({
+    'page title is "Other Title"': {
+      actions: [expect.objectContaining({ method: 'expectTitle' })],
+    },
+  });
+  {
+    const { page, agent } = await runAgent(context);
+    await page.setContent(`<title>My Page Title</title>`);
+    const error = await agent.expect('page title is "Other Title"').catch(e => e);
+    expect(stripAnsi(error.message)).toContain(`pageAgent.expect: expect(page).toHaveTitle(expected) failed`);
+    expect(stripAnsi(error.message)).toContain(`Received: My Page Title`);
   }
 });

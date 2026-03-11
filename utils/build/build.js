@@ -535,7 +535,7 @@ steps.push(new ProgramStep({
 }));
 
 // Build/watch web packages.
-for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer']) {
+for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer', 'devtools']) {
   steps.push(new ProgramStep({
     command: 'npx',
     args: [
@@ -550,6 +550,16 @@ for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer']) {
     concurrent: true,
   }));
 }
+
+// Generate CLI help.
+onChanges.push({
+  inputs: [
+    'packages/playwright-core/src/cli/daemon/commands.ts',
+    'packages/playwright-core/src/cli/daemon/helpGenerator.ts',
+    'utils/generate_cli_help.js',
+  ],
+  script: 'utils/generate_cli_help.js',
+});
 
 // Generate injected.
 onChanges.push({
@@ -624,6 +634,7 @@ copyFiles.push({
   to: 'packages/playwright-core/lib',
 });
 
+
 copyFiles.push({
   files: 'packages/playwright/src/agents/*.md',
   from: 'packages/playwright/src',
@@ -636,22 +647,26 @@ copyFiles.push({
   to: 'packages/playwright/lib',
 });
 
+copyFiles.push({
+  files: 'packages/playwright-core/src/skill/**/*.md',
+  from: 'packages/playwright-core/src',
+  to: 'packages/playwright-core/lib',
+});
+
+copyFiles.push({
+  files: 'packages/playwright-core/src/devtools/*.{png,ico}',
+  from: 'packages/playwright-core/src',
+  to: 'packages/playwright-core/lib',
+});
+
 if (watchMode) {
   // Run TypeScript for type checking.
   steps.push(new ProgramStep({
     command: 'npx',
-    args: ['tsc', ...(watchMode ? ['-w'] : []), '--preserveWatchOutput', '-p', quotePath(filePath('.'))],
+    args: ['tsc', '-w', '--preserveWatchOutput', '-p', quotePath(filePath('.'))],
     shell: true,
     concurrent: true,
   }));
-  for (const webPackage of ['html-reporter', 'recorder', 'trace-viewer']) {
-    steps.push(new ProgramStep({
-      command: 'npx',
-      args: ['tsc', ...(watchMode ? ['-w'] : []), '--preserveWatchOutput', '-p', quotePath(filePath(`packages/${webPackage}`))],
-      shell: true,
-      concurrent: true,
-    }));
-  }
 }
 
 let cleanupCalled = false;

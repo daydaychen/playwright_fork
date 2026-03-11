@@ -28,7 +28,7 @@ test('save as pdf unavailable', async ({ startClient, server }) => {
   expect(await client.callTool({
     name: 'browser_pdf_save',
   })).toHaveResponse({
-    result: 'Error: Tool "browser_pdf_save" not found',
+    error: 'Tool "browser_pdf_save" not found',
     isError: true,
   });
 });
@@ -44,29 +44,28 @@ test('save as pdf', async ({ startClient, mcpBrowser, server }, testInfo) => {
     name: 'browser_navigate',
     arguments: { url: server.HELLO_WORLD },
   })).toHaveResponse({
-    pageState: expect.stringContaining(`- generic [active] [ref=e1]: Hello, world!`),
+    snapshot: expect.stringContaining(`- generic [active] [ref=e1]: Hello, world!`),
   });
 
   expect(await client.callTool({
     name: 'browser_pdf_save',
   })).toHaveResponse({
     code: expect.stringContaining(`await page.pdf(`),
-    files: expect.stringMatching(/\[Page saved as PDF\]\(.*page-[^:]+.pdf\)/),
+    result: expect.stringMatching(/\[Page as pdf\]\(.*page-[^:]+.pdf\)/),
   });
 });
 
 test('save as pdf (filename: output.pdf)', async ({ startClient, mcpBrowser, server }, testInfo) => {
-  const outputDir = testInfo.outputPath('output');
   test.skip(!!mcpBrowser && !['chromium', 'chrome', 'msedge'].includes(mcpBrowser), 'Save as PDF is only supported in Chromium.');
   const { client } = await startClient({
-    config: { outputDir, capabilities: ['pdf'] },
+    config: { capabilities: ['pdf'] },
   });
 
   expect(await client.callTool({
     name: 'browser_navigate',
     arguments: { url: server.HELLO_WORLD },
   })).toHaveResponse({
-    pageState: expect.stringContaining(`- generic [active] [ref=e1]: Hello, world!`),
+    snapshot: expect.stringContaining(`- generic [active] [ref=e1]: Hello, world!`),
   });
 
   expect(await client.callTool({
@@ -75,13 +74,13 @@ test('save as pdf (filename: output.pdf)', async ({ startClient, mcpBrowser, ser
       filename: 'output.pdf',
     },
   })).toHaveResponse({
-    files: expect.stringContaining(`output.pdf`),
+    result: expect.stringContaining(`output.pdf`),
     code: expect.stringContaining(`await page.pdf(`),
   });
 
-  const files = [...fs.readdirSync(outputDir)];
+  const files = [...fs.readdirSync(testInfo.outputPath())];
 
-  expect(fs.existsSync(outputDir)).toBeTruthy();
+  expect(fs.existsSync(testInfo.outputPath())).toBeTruthy();
   const pdfFiles = files.filter(f => f.endsWith('.pdf'));
   expect(pdfFiles).toHaveLength(1);
   expect(pdfFiles[0]).toMatch(/^output.pdf$/);

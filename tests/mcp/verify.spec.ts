@@ -84,7 +84,56 @@ test('browser_verify_element_visible (not found)', async ({ client, server }) =>
     },
   })).toHaveResponse({
     isError: true,
-    result: 'Element with role "button" and accessible name "Cancel" not found',
+    error: 'Element with role "button" and accessible name "Cancel" not found',
+  });
+});
+
+test('browser_verify_element_visible (iframe)', async ({ client, server }) => {
+  server.setContent('/', `
+    <title>Test Page</title>
+    <h1>Outer frame text</h1>
+    <iframe srcdoc="<html><body><h1>Inner iframe</h1></body></html>" width="400" height="200">
+    </iframe>
+  `, 'text/html');
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.PREFIX },
+  });
+
+  expect(await client.callTool({
+    name: 'browser_verify_element_visible',
+    arguments: {
+      role: 'heading',
+      accessibleName: 'Inner iframe',
+    },
+  })).toHaveResponse({
+    result: 'Done',
+    code: `await expect(page.locator('iframe').contentFrame().getByRole('heading', { name: 'Inner iframe' })).toBeVisible();`,
+  });
+});
+
+test('browser_verify_text_visible (iframe)', async ({ client, server }) => {
+  server.setContent('/', `
+    <title>Test Page</title>
+    <h1>Outer frame text</h1>
+    <iframe srcdoc="<html><body><h1>Inner iframe</h1></body></html>" width="400" height="200">
+    </iframe>
+  `, 'text/html');
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.PREFIX },
+  });
+
+  expect(await client.callTool({
+    name: 'browser_verify_text_visible',
+    arguments: {
+      text: 'Inner iframe',
+    },
+  })).toHaveResponse({
+    result: 'Done',
+    code: `await expect(page.locator('iframe').contentFrame().getByRole('heading', { name: 'Inner iframe' })).toBeVisible();`,
   });
 });
 
@@ -150,7 +199,7 @@ test('browser_verify_text_visible (not found)', async ({ client, server }) => {
     },
   })).toHaveResponse({
     isError: true,
-    result: 'Text not found',
+    error: 'Text not found',
   });
 });
 
@@ -276,7 +325,7 @@ test('browser_verify_list_visible (item not found)', async ({ client, server }) 
     },
   })).toHaveResponse({
     isError: true,
-    result: 'Item "Cherry" not found',
+    error: 'Item "Cherry" not found',
   });
 });
 
@@ -344,7 +393,7 @@ test('browser_verify_value (textbox wrong value)', async ({ client, server }) =>
     },
   })).toHaveResponse({
     isError: true,
-    result: 'Expected value "Jane Smith", but got "John Doe"',
+    error: 'Expected value "Jane Smith", but got "John Doe"',
   });
 });
 
@@ -428,7 +477,7 @@ test('browser_verify_value (checkbox wrong value)', async ({ client, server }) =
     },
   })).toHaveResponse({
     isError: true,
-    result: 'Expected value "false", but got "true"',
+    error: 'Expected value "false", but got "true"',
   });
 });
 

@@ -73,21 +73,30 @@ export function isFetch(request: playwright.Request): boolean {
 }
 
 export async function renderRequest(request: playwright.Request): Promise<string> {
-  const response = request.existingResponse();
-
   const result: string[] = [];
   const postData = request.postData();
   const requestHeaders = request.headers();
-  const responseHeaders = response ? await response.allHeaders() : {};
 
   result.push(`[${(request as any)._guid}] [${request.method().toUpperCase()}] ${request.url()}`);
   result.push(`request_headers: ${JSON.stringify(filterRequestHeaders(requestHeaders))}`);
   if (postData)
     result.push(`request_payload: ${postData.substring(0, 300)}`);
-  if (response)
-    result.push(`=> ${response.status()} ${response.statusText()}`);
-  if (responseHeaders)
-    result.push(`response_headers: ${JSON.stringify(filterResponseHeaders(responseHeaders))}`);
+
+  try {
+    const response = request.existingResponse();
+    if (response) {
+      result.push(`=> ${response.status()} ${response.statusText()}`);
+      const responseHeaders = await response.allHeaders();
+      if (responseHeaders)
+        result.push(`response_headers: ${JSON.stringify(filterResponseHeaders(responseHeaders))}`);
+    }
+  } catch (e: any) {
+    // Response object has been collected by Playwright to prevent memory leaks
+    if (e.message?.includes('has been collected'))
+      result.push(`=> [response collected]`);
+    else
+      throw e;
+  }
   return result.join('\n');
 }
 

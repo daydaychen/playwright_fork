@@ -812,6 +812,29 @@ const devtoolsShow = declareCommand({
   toolParams: () => ({}),
 });
 
+// XPath Extraction Command
+
+const xpathExtract = declareCommand({
+  name: 'xpath-extract',
+  description: 'Extract data from page using XPath expressions',
+  category: 'devtools',
+  args: z.object({
+    xpath: z.string().describe('XPath expression to extract data'),
+  }),
+  options: z.object({
+    ['base-xpath']: z.string().optional().describe('Base XPath to scope the extraction'),
+    ['extract-type']: z.enum(['text', 'html', 'attribute']).optional().describe('Type of content to extract'),
+    ['attribute-name']: z.string().optional().describe('Attribute name when extract-type is "attribute"'),
+  }),
+  toolName: 'browser_xpath_extract',
+  toolParams: ({ xpath, ['base-xpath']: baseXpath, ['extract-type']: extractType, ['attribute-name']: attributeName }) => ({
+    xpath,
+    baseXpath,
+    extractType,
+    attributeName,
+  }),
+});
+
 // Sessions
 
 const sessionList = declareCommand({
@@ -989,6 +1012,7 @@ const commandsArray: AnyCommandSchema[] = [
   videoStart,
   videoStop,
   devtoolsShow,
+  xpathExtract,
 
   // session category
   sessionList,

@@ -1803,7 +1803,6 @@ var banana = await page.GetByRole(AriaRole.Listitem).Last(1);
 ### option: Locator.locator.hasNotText = %%-locator-option-has-not-text-%%
 * since: v1.33
 
-
 ## method: Locator.nth
 * since: v1.14
 - returns: <[Locator]>
@@ -2486,6 +2485,19 @@ This method expects [Locator] to point to an
 ### option: Locator.setInputFiles.timeout = %%-input-timeout-js-%%
 * since: v1.14
 
+## async method: Locator.snapshotForAI
+* since: v1.59
+- returns: <[Object]>
+  - `full` <[string]> Accessibility snapshot of the element matching this locator.
+
+Returns an accessibility snapshot of the element's subtree optimized for AI consumption.
+
+### option: Locator.snapshotForAI.timeout = %%-input-timeout-%%
+* since: v1.59
+
+### option: Locator.snapshotForAI.timeout = %%-input-timeout-js-%%
+* since: v1.59
+
 ## async method: Locator.tap
 * since: v1.14
 
@@ -2543,6 +2555,12 @@ If you need to assert text on the page, prefer [`method: LocatorAssertions.toHav
 
 ### option: Locator.textContent.timeout = %%-input-timeout-js-%%
 * since: v1.14
+
+## async method: Locator.toCode
+* since: v1.59
+- returns: <[string]>
+
+Returns a code string for a locator that uses best practices for referencing the matched element, prioritizing test ids, aria roles, and other user-facing attributes over CSS selectors.
 
 ## method: Locator.toString
 * since: v1.57

@@ -19,26 +19,30 @@ import net from 'net';
 import path from 'path';
 import os from 'os';
 
-import type { Browser } from './server/browser';
-import type { LaunchOptions } from './server/types';
-import type { BrowserName } from './server/registry/index';
+// Only client depenencies with backward compatibility guarantees should be imported here.
+import type { LaunchOptions } from '../types/types';
 
 const packageVersion = require('../package.json').version;
 
 export type BrowserInfo = {
+  guid: string;
+  browserName: 'chromium' | 'firefox' | 'webkit';
+  userDataDir?: string;
+  launchOptions: LaunchOptions;
+};
+
+export type EndpointInfo = {
   title: string;
   wsEndpoint?: string;
   pipeName?: string;
   workspaceDir?: string;
+  metadata?: Record<string, any>;
 };
 
-export type BrowserDescriptor = BrowserInfo & {
+export type BrowserDescriptor = EndpointInfo & {
   playwrightVersion: string;
   playwrightLib: string;
-  browser: {
-    browserName: BrowserName;
-    launchOptions: LaunchOptions;
-  };
+  browser: BrowserInfo;
 };
 
 export type BrowserStatus = BrowserDescriptor & { canConnect: boolean };
@@ -46,7 +50,7 @@ export type BrowserStatus = BrowserDescriptor & { canConnect: boolean };
 type BrowserEntry = BrowserStatus & { file: string };
 
 class ServerRegistry {
-  async list(options?: { gc?: boolean, includeDisconnected?: boolean }): Promise<Map<string, BrowserStatus[]>> {
+  async list(): Promise<Map<string, BrowserStatus[]>> {
     const files = await fs.promises.readdir(this._browsersDir()).catch(() => []);
     const result = new Map<string, Promise<BrowserEntry>[]>();
     for (const file of files) {
@@ -68,40 +72,54 @@ class ServerRegistry {
     const resolvedResult = new Map<string, BrowserStatus[]>();
     for (const [key, promises] of result) {
       const entries = await Promise.all(promises);
-      if (options?.gc) {
-        for (const entry of entries) {
-          if (!entry.canConnect)
-            await fs.promises.unlink(entry.file).catch(() => {});
+      const descriptors = [];
+      for (const entry of entries) {
+        if (!entry.canConnect && !entry.browser.userDataDir) {
+          await fs.promises.unlink(entry.file).catch(() => {});
+          continue;
         }
+        descriptors.push(entry);
       }
-      const list = options?.includeDisconnected ? entries : entries.filter(entry => entry.canConnect);
-      if (list.length)
-        resolvedResult.set(key, list);
+      if (descriptors.length)
+        resolvedResult.set(key, descriptors);
     }
     return resolvedResult;
   }
 
-  async create(browser: Browser, info: BrowserInfo): Promise<void> {
+  async create(browser: BrowserInfo, endpoint: EndpointInfo) {
     const file = path.join(this._browsersDir(), browser.guid);
     await fs.promises.mkdir(this._browsersDir(), { recursive: true });
     const descriptor: BrowserDescriptor = {
       playwrightVersion: packageVersion,
       playwrightLib: require.resolve('..'),
-      title: info.title,
-      browser: {
-        browserName: browser.options.browserType,
-        launchOptions: browser.options.originalLaunchOptions,
-      },
-      wsEndpoint: info.wsEndpoint,
-      pipeName: info.pipeName,
-      workspaceDir: info.workspaceDir,
+      title: endpoint.title,
+      browser,
+      wsEndpoint: endpoint.wsEndpoint,
+      pipeName: endpoint.pipeName,
+      workspaceDir: endpoint.workspaceDir,
     };
     await fs.promises.writeFile(file, JSON.stringify(descriptor), 'utf-8');
   }
 
-  async delete(browser: Browser): Promise<void> {
-    const file = path.join(this._browsersDir(), browser.guid);
+  async delete(guid: string): Promise<void> {
+    const file = path.join(this._browsersDir(), guid);
     await fs.promises.unlink(file).catch(() => {});
+  }
+
+  async deleteUserData(guid: string): Promise<void> {
+    const filePath = path.join(this._browsersDir(), guid);
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const descriptor: BrowserDescriptor = JSON.parse(content);
+    if (descriptor.browser.userDataDir)
+      await fs.promises.rm(descriptor.browser.userDataDir, { recursive: true, force: true });
+    await fs.promises.unlink(filePath);
+  }
+
+  readDescriptor(guid: string): BrowserDescriptor {
+    const filePath = path.join(this._browsersDir(), guid);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const descriptor: BrowserDescriptor = JSON.parse(content);
+    return descriptor;
   }
 
   async find(name: string): Promise<BrowserDescriptor | null> {

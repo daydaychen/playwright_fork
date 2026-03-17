@@ -2100,92 +2100,15 @@ export interface Page {
   }): Promise<ElementHandle>;
 
   /**
-   * Initialize page agent with the llm provider and cache.
-   * @param options
-   */
-  agent(options?: {
-    cache?: {
-      /**
-       * Cache file to use/generate code for performed actions into. Cache is not used if not specified (default).
-       */
-      cacheFile?: string;
-
-      /**
-       * When specified, generated entries are written into the `cacheOutFile` instead of updating the `cacheFile`.
-       */
-      cacheOutFile?: string;
-    };
-
-    expect?: {
-      /**
-       * Default timeout for expect calls in milliseconds, defaults to 5000ms.
-       */
-      timeout?: number;
-    };
-
-    /**
-     * Limits to use for the agentic loop.
-     */
-    limits?: {
-      /**
-       * Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
-       * Defaults to unlimited.
-       */
-      maxTokens?: number;
-
-      /**
-       * Maximum number of agentic actions to generate, defaults to 10.
-       */
-      maxActions?: number;
-
-      /**
-       * Maximum number retries per action, defaults to 3.
-       */
-      maxActionRetries?: number;
-    };
-
-    provider?: {
-      /**
-       * API to use.
-       */
-      api: "openai"|"openai-compatible"|"anthropic"|"google";
-
-      /**
-       * Endpoint to use if different from default.
-       */
-      apiEndpoint?: string;
-
-      /**
-       * API key for the LLM provider.
-       */
-      apiKey: string;
-
-      /**
-       * Amount of time to wait for the provider to respond to each request.
-       */
-      apiTimeout?: number;
-
-      /**
-       * Model identifier within the provider. Required in non-cache mode.
-       */
-      model: string;
-    };
-
-    /**
-     * Secrets to hide from the LLM.
-     */
-    secrets?: { [key: string]: string; };
-
-    /**
-     * System prompt for the agent's loop.
-     */
-    systemPrompt?: string;
-  }): Promise<PageAgent>;
-
-  /**
    * Brings page to front (activates tab).
    */
   bringToFront(): Promise<void>;
+
+  /**
+   * Cancels an ongoing [page.pickLocator()](https://playwright.dev/docs/api/class-page#page-pick-locator) call by
+   * deactivating pick locator mode. If no pick locator mode is active, this method is a no-op.
+   */
+  cancelPickLocator(): Promise<void>;
 
   /**
    * **NOTE** Use locator-based [locator.check([options])](https://playwright.dev/docs/api/class-locator#locator-check) instead.
@@ -2258,15 +2181,15 @@ export interface Page {
 
   /**
    * Clears all stored console messages from this page. Subsequent calls to
-   * [page.consoleMessages()](https://playwright.dev/docs/api/class-page#page-console-messages) will only return
-   * messages logged after the clear.
+   * [page.consoleMessages([options])](https://playwright.dev/docs/api/class-page#page-console-messages) will only
+   * return messages logged after the clear.
    */
   clearConsoleMessages(): Promise<void>;
 
   /**
    * Clears all stored page errors from this page. Subsequent calls to
-   * [page.pageErrors()](https://playwright.dev/docs/api/class-page#page-page-errors) will only return errors thrown
-   * after the clear.
+   * [page.pageErrors([options])](https://playwright.dev/docs/api/class-page#page-page-errors) will only return errors
+   * thrown after the clear.
    */
   clearPageErrors(): Promise<void>;
 
@@ -2395,8 +2318,14 @@ export interface Page {
   /**
    * Returns up to (currently) 200 last console messages from this page. See
    * [page.on('console')](https://playwright.dev/docs/api/class-page#page-event-console) for more details.
+   * @param options
    */
-  consoleMessages(): Promise<Array<ConsoleMessage>>;
+  consoleMessages(options?: {
+    /**
+     * Controls which messages are returned:
+     */
+    filter?: "all"|"sinceNavigation";
+  }): Promise<Array<ConsoleMessage>>;
 
   /**
    * Gets the full HTML contents of the page, including the doctype.
@@ -3503,24 +3432,6 @@ export interface Page {
   }): Promise<string>;
 
   /**
-   * Returns the [Inspector](https://playwright.dev/docs/api/class-inspector) object associated with this page.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const inspector = page.inspector();
-   * inspector.on('screencastFrame', data => {
-   *   console.log('received frame, jpeg size:', data.length);
-   * });
-   * await inspector.startScreencast();
-   * // ... perform actions ...
-   * await inspector.stopScreencast();
-   * ```
-   *
-   */
-  inspector(): Inspector;
-
-  /**
    * **NOTE** Use locator-based [locator.isChecked([options])](https://playwright.dev/docs/api/class-locator#locator-is-checked)
    * instead. Read more about [locators](https://playwright.dev/docs/locators).
    *
@@ -3739,8 +3650,14 @@ export interface Page {
   /**
    * Returns up to (currently) 200 last page errors from this page. See
    * [page.on('pageerror')](https://playwright.dev/docs/api/class-page#page-event-page-error) for more details.
+   * @param options
    */
-  pageErrors(): Promise<Array<Error>>;
+  pageErrors(options?: {
+    /**
+     * Controls which errors are returned:
+     */
+    filter?: "all"|"sinceNavigation";
+  }): Promise<Array<Error>>;
 
   /**
    * Pauses script execution. Playwright will stop executing the script and wait for the user to either press the
@@ -3921,6 +3838,21 @@ export interface Page {
      */
     width?: string|number;
   }): Promise<Buffer>;
+
+  /**
+   * Enters pick locator mode where hovering over page elements highlights them and shows the corresponding locator.
+   * Once the user clicks an element, the mode is deactivated and the
+   * [Locator](https://playwright.dev/docs/api/class-locator) for the picked element is returned.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const locator = await page.pickLocator();
+   * console.log(locator);
+   * ```
+   *
+   */
+  pickLocator(): Promise<Locator>;
 
   /**
    * **NOTE** Use locator-based [locator.press(key[, options])](https://playwright.dev/docs/api/class-locator#locator-press)
@@ -4582,6 +4514,37 @@ export interface Page {
      */
     height: number;
   }): Promise<void>;
+
+  /**
+   * Returns an accessibility snapshot of the page optimized for AI consumption.
+   * @param options
+   */
+  snapshotForAI(options?: {
+    /**
+     * Maximum time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via `actionTimeout`
+     * option in the config, or by using the
+     * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
+     * or [page.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-page#page-set-default-timeout) methods.
+     */
+    timeout?: number;
+
+    /**
+     * When specified, enables incremental snapshots. Subsequent calls with the same track name will return an incremental
+     * snapshot containing only changes since the last call.
+     */
+    track?: string;
+  }): Promise<{
+    /**
+     * Full accessibility snapshot of the page.
+     */
+    full: string;
+
+    /**
+     * Incremental snapshot containing only changes since the last tracked snapshot, when using the
+     * [`track`](https://playwright.dev/docs/api/class-page#page-snapshot-for-ai-option-track) option.
+     */
+    incremental?: string;
+  }>;
 
   /**
    * **NOTE** Use locator-based [locator.tap([options])](https://playwright.dev/docs/api/class-locator#locator-tap) instead. Read
@@ -5330,244 +5293,24 @@ export interface Page {
    */
   request: APIRequestContext;
 
+  /**
+   * [Screencast](https://playwright.dev/docs/api/class-screencast) object associated with this page.
+   *
+   * **Usage**
+   *
+   * ```js
+   * page.screencast.on('screencastFrame', data => {
+   *   console.log('received frame, jpeg size:', data.length);
+   * });
+   * await page.screencast.start();
+   * // ... perform actions ...
+   * await page.screencast.stop();
+   * ```
+   *
+   */
+  screencast: Screencast;
+
   touchscreen: Touchscreen;
-
-  [Symbol.asyncDispose](): Promise<void>;
-}
-
-/**
- *
- */
-export interface PageAgent {
-  /**
-   * Extract information from the page using the agentic loop, return it in a given Zod format.
-   *
-   * **Usage**
-   *
-   * ```js
-   * await agent.extract('List of items in the cart', z.object({
-   *   title: z.string().describe('Item title to extract'),
-   *   price: z.string().describe('Item price to extract'),
-   * }).array());
-   * ```
-   *
-   * @param query Task to perform using agentic loop.
-   * @param schema
-   * @param options
-   */
-  extract<Schema extends ZodSchema>(query: string, schema: Schema): Promise<{ result: InferZodSchema<Schema>, usage: { turns: number, inputTokens: number, outputTokens: number } }>;
-  /**
-   * Emitted when the agent makes a turn.
-   */
-  on(event: 'turn', listener: (data: {
-    role: string;
-
-    message: string;
-
-    usage?: {
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }) => any): this;
-
-  /**
-   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
-   */
-  once(event: 'turn', listener: (data: {
-    role: string;
-
-    message: string;
-
-    usage?: {
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }) => any): this;
-
-  /**
-   * Emitted when the agent makes a turn.
-   */
-  addListener(event: 'turn', listener: (data: {
-    role: string;
-
-    message: string;
-
-    usage?: {
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }) => any): this;
-
-  /**
-   * Removes an event listener added by `on` or `addListener`.
-   */
-  removeListener(event: 'turn', listener: (data: {
-    role: string;
-
-    message: string;
-
-    usage?: {
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }) => any): this;
-
-  /**
-   * Removes an event listener added by `on` or `addListener`.
-   */
-  off(event: 'turn', listener: (data: {
-    role: string;
-
-    message: string;
-
-    usage?: {
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }) => any): this;
-
-  /**
-   * Emitted when the agent makes a turn.
-   */
-  prependListener(event: 'turn', listener: (data: {
-    role: string;
-
-    message: string;
-
-    usage?: {
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }) => any): this;
-
-  /**
-   * Dispose this agent.
-   */
-  dispose(): Promise<void>;
-
-  /**
-   * Expect certain condition to be met.
-   *
-   * **Usage**
-   *
-   * ```js
-   * await agent.expect('"0 items" to be reported');
-   * ```
-   *
-   * @param expectation Expectation to assert.
-   * @param options
-   */
-  expect(expectation: string, options?: {
-    /**
-     * All the agentic actions are converted to the Playwright calls and are cached. By default, they are cached globally
-     * with the `task` as a key. This option allows controlling the cache key explicitly.
-     */
-    cacheKey?: string;
-
-    /**
-     * Maximum number of retries when generating each action, defaults to context-wide value specified in `agent`
-     * property.
-     */
-    maxActionRetries?: number;
-
-    /**
-     * Maximum number of agentic actions to generate, defaults to context-wide value specified in `agent` property.
-     */
-    maxActions?: number;
-
-    /**
-     * Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
-     * Defaults to context-wide value specified in `agent` property.
-     */
-    maxTokens?: number;
-
-    /**
-     * Expect timeout in milliseconds. Defaults to `5000`. The default value can be changed via `expect.timeout` option in
-     * the config, or by specifying the `expect` property of the
-     * [`expect`](https://playwright.dev/docs/api/class-page#page-agent-option-expect) option. Pass `0` to disable
-     * timeout.
-     */
-    timeout?: number;
-  }): Promise<void>;
-
-  /**
-   * Perform action using agentic loop.
-   *
-   * **Usage**
-   *
-   * ```js
-   * await agent.perform('Click submit button');
-   * ```
-   *
-   * @param task Task to perform using agentic loop.
-   * @param options
-   */
-  perform(task: string, options?: {
-    /**
-     * All the agentic actions are converted to the Playwright calls and are cached. By default, they are cached globally
-     * with the `task` as a key. This option allows controlling the cache key explicitly.
-     */
-    cacheKey?: string;
-
-    /**
-     * Maximum number of retries when generating each action, defaults to context-wide value specified in `agent`
-     * property.
-     */
-    maxActionRetries?: number;
-
-    /**
-     * Maximum number of agentic actions to generate, defaults to context-wide value specified in `agent` property.
-     */
-    maxActions?: number;
-
-    /**
-     * Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
-     * Defaults to context-wide value specified in `agent` property.
-     */
-    maxTokens?: number;
-
-    /**
-     * Perform timeout in milliseconds. Defaults to `5000`. The default value can be changed via `actionTimeout` option in
-     * the config, or by using the
-     * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
-     * or [page.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-page#page-set-default-timeout) methods.
-     * Pass `0` to disable timeout.
-     */
-    timeout?: number;
-  }): Promise<{
-    usage: {
-      turns: number;
-
-      inputTokens: number;
-
-      outputTokens: number;
-    };
-  }>;
-
-  /**
-   * Returns the current token usage for this agent.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const usage = await agent.usage();
-   * console.log(`Tokens used: ${usage.inputTokens} in, ${usage.outputTokens} out`);
-   * ```
-   *
-   */
-  usage(): Promise<{
-    turns: number;
-
-    inputTokens: number;
-
-    outputTokens: number;
-  }>;
 
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -9384,6 +9127,11 @@ export interface BrowserContext {
   }): Promise<void>;
 
   /**
+   * Indicates that the browser context is in the process of closing or has already been closed.
+   */
+  isClosedOrClosing(): boolean;
+
+  /**
    * **NOTE** CDP sessions are only supported on Chromium-based browsers.
    *
    * Returns the newly created session.
@@ -9947,6 +9695,11 @@ export interface BrowserContext {
   clock: Clock;
 
   /**
+   * Debugger allows to pause and resume the execution.
+   */
+  debugger: Debugger;
+
+  /**
    * API testing helper associated with this context. Requests made with this API will use context cookies.
    */
   request: APIRequestContext;
@@ -10087,6 +9840,12 @@ export interface Browser {
    * Indicates that the browser is connected.
    */
   isConnected(): boolean;
+
+  /**
+   * Returns the launch options that were used to launch this browser. The return type matches the options accepted by
+   * [browserType.launch([options])](https://playwright.dev/docs/api/class-browsertype#browser-type-launch).
+   */
+  launchOptions(): Object;
 
   /**
    * **NOTE** CDP Sessions are only supported on Chromium-based browsers.
@@ -10644,6 +10403,12 @@ export interface Browser {
    * Returns the buffer with trace data.
    */
   stopTracing(): Promise<Buffer>;
+
+  /**
+   * Returns the user data directory that the browser was launched with, or `null` if the browser was launched without a
+   * persistent context.
+   */
+  userDataDir(): null|string;
 
   /**
    * Returns the browser version.
@@ -14914,6 +14679,25 @@ export interface Locator {
   }): Promise<void>;
 
   /**
+   * Returns an accessibility snapshot of the element's subtree optimized for AI consumption.
+   * @param options
+   */
+  snapshotForAI(options?: {
+    /**
+     * Maximum time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via `actionTimeout`
+     * option in the config, or by using the
+     * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
+     * or [page.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-page#page-set-default-timeout) methods.
+     */
+    timeout?: number;
+  }): Promise<{
+    /**
+     * Accessibility snapshot of the element matching this locator.
+     */
+    full: string;
+  }>;
+
+  /**
    * Perform a tap gesture on the element matching the locator. For examples of emulating other gestures by manually
    * dispatching touch events, see the [emulating legacy touch events](https://playwright.dev/docs/touch-events) page.
    *
@@ -15001,6 +14785,12 @@ export interface Locator {
      */
     timeout?: number;
   }): Promise<null|string>;
+
+  /**
+   * Returns a code string for a locator that uses best practices for referencing the matched element, prioritizing test
+   * ids, aria roles, and other user-facing attributes over CSS selectors.
+   */
+  toCode(): Promise<string>;
 
   /**
    * Focuses the element, and then sends a `keydown`, `keypress`/`input`, and `keyup` event for each character in the
@@ -19619,6 +19409,89 @@ export interface Coverage {
 }
 
 /**
+ * API for controlling the Playwright debugger. The debugger allows pausing script execution and inspecting the page.
+ * Obtain the debugger instance via
+ * [browserContext.debugger](https://playwright.dev/docs/api/class-browsercontext#browser-context-debugger).
+ *
+ * See also [page.pause()](https://playwright.dev/docs/api/class-page#page-pause) for a simple way to pause script
+ * execution.
+ */
+export interface Debugger {
+  /**
+   * Emitted when the debugger pauses or resumes.
+   */
+  on(event: 'pausedstatechanged', listener: () => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'pausedstatechanged', listener: () => any): this;
+
+  /**
+   * Emitted when the debugger pauses or resumes.
+   */
+  addListener(event: 'pausedstatechanged', listener: () => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  removeListener(event: 'pausedstatechanged', listener: () => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'pausedstatechanged', listener: () => any): this;
+
+  /**
+   * Emitted when the debugger pauses or resumes.
+   */
+  prependListener(event: 'pausedstatechanged', listener: () => any): this;
+
+  /**
+   * Returns details about the currently paused calls. Returns an empty array if the debugger is not paused.
+   */
+  pausedDetails(): Array<{
+    location: {
+      file: string;
+
+      line?: number;
+
+      column?: number;
+    };
+
+    title: string;
+  }>;
+
+  /**
+   * Resumes script execution if the debugger is paused.
+   */
+  resume(): Promise<void>;
+
+  /**
+   * Configures the debugger to pause at the next action or at a specific source location. Call without arguments to
+   * reset the pausing behavior.
+   * @param options
+   */
+  setPauseAt(options?: {
+    /**
+     * When specified, the debugger will pause when the action originates from the given source location.
+     */
+    location?: {
+      file: string;
+
+      line?: number;
+
+      column?: number;
+    };
+
+    /**
+     * When `true`, the debugger will pause before the next action.
+     */
+    next?: boolean;
+  }): Promise<void>;
+}
+
+/**
  * [Dialog](https://playwright.dev/docs/api/class-dialog) objects are dispatched by page via the
  * [page.on('dialog')](https://playwright.dev/docs/api/class-page#page-event-dialog) event.
  *
@@ -20578,187 +20451,6 @@ export interface FrameLocator {
    *
    */
   owner(): Locator;
-}
-
-/**
- * Interface to the Playwright inspector.
- */
-export interface Inspector {
-  /**
-   * Emitted for each captured JPEG screencast frame while the screencast is running.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const inspector = page.inspector();
-   * inspector.on('screencastframe', ({ data, width, height }) => {
-   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
-   *   require('fs').writeFileSync('frame.jpg', data);
-   * });
-   * await inspector.startScreencast({ maxSize: { width: 1200, height: 800 } });
-   * // ... perform actions ...
-   * await inspector.stopScreencast();
-   * ```
-   *
-   */
-  on(event: 'screencastframe', listener: (data: {
-    /**
-     * JPEG-encoded frame data.
-     */
-    data: Buffer;
-  }) => any): this;
-
-  /**
-   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
-   */
-  once(event: 'screencastframe', listener: (data: {
-    /**
-     * JPEG-encoded frame data.
-     */
-    data: Buffer;
-  }) => any): this;
-
-  /**
-   * Emitted for each captured JPEG screencast frame while the screencast is running.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const inspector = page.inspector();
-   * inspector.on('screencastframe', ({ data, width, height }) => {
-   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
-   *   require('fs').writeFileSync('frame.jpg', data);
-   * });
-   * await inspector.startScreencast({ maxSize: { width: 1200, height: 800 } });
-   * // ... perform actions ...
-   * await inspector.stopScreencast();
-   * ```
-   *
-   */
-  addListener(event: 'screencastframe', listener: (data: {
-    /**
-     * JPEG-encoded frame data.
-     */
-    data: Buffer;
-  }) => any): this;
-
-  /**
-   * Removes an event listener added by `on` or `addListener`.
-   */
-  removeListener(event: 'screencastframe', listener: (data: {
-    /**
-     * JPEG-encoded frame data.
-     */
-    data: Buffer;
-  }) => any): this;
-
-  /**
-   * Removes an event listener added by `on` or `addListener`.
-   */
-  off(event: 'screencastframe', listener: (data: {
-    /**
-     * JPEG-encoded frame data.
-     */
-    data: Buffer;
-  }) => any): this;
-
-  /**
-   * Emitted for each captured JPEG screencast frame while the screencast is running.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const inspector = page.inspector();
-   * inspector.on('screencastframe', ({ data, width, height }) => {
-   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
-   *   require('fs').writeFileSync('frame.jpg', data);
-   * });
-   * await inspector.startScreencast({ maxSize: { width: 1200, height: 800 } });
-   * // ... perform actions ...
-   * await inspector.stopScreencast();
-   * ```
-   *
-   */
-  prependListener(event: 'screencastframe', listener: (data: {
-    /**
-     * JPEG-encoded frame data.
-     */
-    data: Buffer;
-  }) => any): this;
-
-  /**
-   * Cancels an ongoing
-   * [inspector.pickLocator()](https://playwright.dev/docs/api/class-inspector#inspector-pick-locator) call by
-   * deactivating pick locator mode. If no pick locator mode is active, this method is a no-op.
-   */
-  cancelPickLocator(): Promise<void>;
-
-  /**
-   * Enters pick locator mode where hovering over page elements highlights them and shows the corresponding locator.
-   * Once the user clicks an element, the mode is deactivated and the
-   * [Locator](https://playwright.dev/docs/api/class-locator) for the picked element is returned.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const locator = await page.inspector().pickLocator();
-   * console.log(locator);
-   * ```
-   *
-   */
-  pickLocator(): Promise<Locator>;
-
-  /**
-   * Starts capturing screencast frames. Frames are emitted as
-   * [inspector.on('screencastframe')](https://playwright.dev/docs/api/class-inspector#inspector-event-screencast-frame)
-   * events.
-   *
-   * **Usage**
-   *
-   * ```js
-   * const inspector = page.inspector();
-   * inspector.on('screencastframe', ({ data, width, height }) => {
-   *   console.log(`frame ${width}x${height}, size: ${data.length}`);
-   * });
-   * await inspector.startScreencast({ maxSize: { width: 800, height: 600 } });
-   * // ... perform actions ...
-   * await inspector.stopScreencast();
-   * ```
-   *
-   * @param options
-   */
-  startScreencast(options?: {
-    /**
-     * Maximum screencast frame dimensions. The output frame may be smaller to preserve the page aspect ratio. Defaults to
-     * 800×800.
-     */
-    maxSize?: {
-      /**
-       * Max frame width in pixels.
-       */
-      width: number;
-
-      /**
-       * Max frame height in pixels.
-       */
-      height: number;
-    };
-  }): Promise<void>;
-
-  /**
-   * Stops the screencast started with
-   * [inspector.startScreencast([options])](https://playwright.dev/docs/api/class-inspector#inspector-start-screencast).
-   *
-   * **Usage**
-   *
-   * ```js
-   * await inspector.startScreencast();
-   * // ... perform actions ...
-   * await inspector.stopScreencast();
-   * ```
-   *
-   */
-  stopScreencast(): Promise<void>;
 }
 
 /**
@@ -21946,6 +21638,165 @@ export interface Route {
 }
 
 /**
+ * Interface for capturing screencast frames from a page.
+ */
+export interface Screencast {
+  /**
+   * Emitted for each captured JPEG screencast frame while the screencast is running.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const screencast = page.screencast;
+   * screencast.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
+   *   require('fs').writeFileSync('frame.jpg', data);
+   * });
+   * await screencast.start({ maxSize: { width: 1200, height: 800 } });
+   * // ... perform actions ...
+   * await screencast.stop();
+   * ```
+   *
+   */
+  on(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Emitted for each captured JPEG screencast frame while the screencast is running.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const screencast = page.screencast;
+   * screencast.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
+   *   require('fs').writeFileSync('frame.jpg', data);
+   * });
+   * await screencast.start({ maxSize: { width: 1200, height: 800 } });
+   * // ... perform actions ...
+   * await screencast.stop();
+   * ```
+   *
+   */
+  addListener(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  removeListener(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Emitted for each captured JPEG screencast frame while the screencast is running.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const screencast = page.screencast;
+   * screencast.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, jpeg size: ${data.length}`);
+   *   require('fs').writeFileSync('frame.jpg', data);
+   * });
+   * await screencast.start({ maxSize: { width: 1200, height: 800 } });
+   * // ... perform actions ...
+   * await screencast.stop();
+   * ```
+   *
+   */
+  prependListener(event: 'screencastframe', listener: (data: {
+    /**
+     * JPEG-encoded frame data.
+     */
+    data: Buffer;
+  }) => any): this;
+
+  /**
+   * Starts capturing screencast frames. Frames are emitted as
+   * [screencast.on('screencastframe')](https://playwright.dev/docs/api/class-screencast#screencast-event-screencast-frame)
+   * events.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const screencast = page.screencast;
+   * screencast.on('screencastframe', ({ data, width, height }) => {
+   *   console.log(`frame ${width}x${height}, size: ${data.length}`);
+   * });
+   * await screencast.start({ maxSize: { width: 800, height: 600 } });
+   * // ... perform actions ...
+   * await screencast.stop();
+   * ```
+   *
+   * @param options
+   */
+  start(options?: {
+    /**
+     * Maximum screencast frame dimensions. The output frame may be smaller to preserve the page aspect ratio. Defaults to
+     * 800×800.
+     */
+    maxSize?: {
+      /**
+       * Max frame width in pixels.
+       */
+      width: number;
+
+      /**
+       * Max frame height in pixels.
+       */
+      height: number;
+    };
+  }): Promise<void>;
+
+  /**
+   * Stops the screencast started with
+   * [screencast.start([options])](https://playwright.dev/docs/api/class-screencast#screencast-start).
+   *
+   * **Usage**
+   *
+   * ```js
+   * await screencast.start();
+   * // ... perform actions ...
+   * await screencast.stop();
+   * ```
+   *
+   */
+  stop(): Promise<void>;
+}
+
+/**
  * Selectors can be used to install custom selector engines. See [extensibility](https://playwright.dev/docs/extensibility) for more
  * information.
  */
@@ -22139,6 +21990,13 @@ export interface Tracing {
    * @param options
    */
   start(options?: {
+    /**
+     * When enabled, the trace is written to an unarchived file that is updated in real time as actions occur, instead of
+     * caching changes and archiving them into a zip file at the end. This is useful for live trace viewing during test
+     * execution.
+     */
+    live?: boolean;
+
     /**
      * If specified, intermediate trace files are going to be saved into the files with the given name prefix inside the
      * [`tracesDir`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-traces-dir) directory

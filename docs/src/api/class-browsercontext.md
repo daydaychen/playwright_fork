@@ -74,6 +74,13 @@ This event is not emitted.
 
 Playwright has ability to mock clock and passage of time.
 
+## property: BrowserContext.debugger
+* since: v1.59
+* langs: js
+- type: <[Debugger]>
+
+Debugger allows to pause and resume the execution.
+
 ## event: BrowserContext.close
 * since: v1.8
 - argument: <[BrowserContext]>
@@ -967,6 +974,12 @@ Here are some permissions that may be supported by some browsers:
 - `origin` <[string]>
 
 The [origin] to grant permissions to, e.g. "https://example.com".
+
+## method: BrowserContext.isClosedOrClosing
+* since: v1.59
+- returns: <[boolean]>
+
+Indicates that the browser context is in the process of closing or has already been closed.
 
 ## async method: BrowserContext.newCDPSession
 * since: v1.11

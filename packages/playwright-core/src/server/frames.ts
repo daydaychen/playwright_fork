@@ -1480,11 +1480,8 @@ export class Frame extends SdkObject<FrameEventMap> {
         lastIntermediateResult.received = received;
       }
       lastIntermediateResult.isSet = true;
-      if (!missingReceived) {
-        const rendered = renderUnexpectedValue(options.expression, received);
-        if (rendered !== undefined)
-          progress.log(`  unexpected value "${rendered}"`);
-      }
+      if (!missingReceived && !Array.isArray(received))
+        progress.log(`  unexpected value "${renderUnexpectedValue(options.expression, received)}"`);
     }
     return { matches, received };
   }
@@ -1569,8 +1566,17 @@ export class Frame extends SdkObject<FrameEventMap> {
   }
 
   async title(): Promise<string> {
-    const context = await this._utilityContext();
-    return context.evaluate(() => document.title);
+    try {
+      return await this.raceAgainstEvaluationStallingEvents(async () => {
+        const context = await this._utilityContext();
+        return await context.evaluate(() => document.title);
+      });
+    } catch {
+      const url = this.pendingDocument()?.request?.url();
+      if (url)
+        return `Loading ${url}`;
+      return '';
+    }
   }
 
   async rafrafTimeout(progress: Progress, timeout: number): Promise<void> {
@@ -1748,10 +1754,8 @@ function verifyLifecycle(name: string, waitUntil: types.LifecycleEvent): types.L
   return waitUntil;
 }
 
-function renderUnexpectedValue(expression: string, received: any): string | undefined {
+function renderUnexpectedValue(expression: string, received: any): string {
   if (expression === 'to.match.aria')
-    received = received?.raw;
-  if (Array.isArray(received) || (!!received && typeof received === 'object'))
-    return;
-  return String(received);
+    return received ? received.raw : received;
+  return received;
 }

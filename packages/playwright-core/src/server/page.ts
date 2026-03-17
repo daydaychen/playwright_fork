@@ -30,12 +30,13 @@ import { LongStandingScope, assert, renderTitleForCall, trimStringWithEllipsis }
 import { asLocator } from '../utils';
 import { getComparator } from './utils/comparators';
 import { debugLogger } from './utils/debugLogger';
-import { isInvalidSelectorError } from '../utils/isomorphic/selectorParser';
+import { isInvalidSelectorError, stringifySelector } from '../utils/isomorphic/selectorParser';
 import { ManualPromise } from '../utils/isomorphic/manualPromise';
 import { parseEvaluationResultValue } from '../utils/isomorphic/utilityScriptSerializers';
 import { compressCallLog } from './callLog';
 import * as rawBindingsControllerSource from '../generated/bindingsControllerSource';
 import { Screencast } from './screencast';
+import { NonRecoverableDOMError } from './dom';
 
 import type { Artifact } from './artifact';
 import type { BrowserContextEventMap } from './browserContext';
@@ -48,6 +49,7 @@ import type * as types from './types';
 import type { ImageComparatorOptions } from './utils/comparators';
 import type * as channels from '@protocol/channels';
 import type { BindingPayload } from '@injected/bindingsController';
+import type { SelectorInfo } from './frameSelectors';
 
 export interface PageDelegate {
   readonly rawMouse: input.RawMouse;
@@ -149,11 +151,13 @@ export type PageEventMap = {
   [PageEvent.Worker]: [worker: Worker];
 };
 
+const navigationMarkSymbol = Symbol('navigationMark');
+
 export class Page extends SdkObject<PageEventMap> {
   static Events = PageEvent;
 
   private _closedState: 'open' | 'closing' | 'closed' = 'open';
-  private _closedPromise = new ManualPromise<void>();
+  readonly closedPromise = new ManualPromise<void>();
   private _initialized: Page | Error | undefined;
   private _initializedPromise = new ManualPromise<Page | Error>();
   private _consoleMessages: ConsoleMessage[] = [];
@@ -280,7 +284,7 @@ export class Page extends SdkObject<PageEventMap> {
     this._closedState = 'closed';
     this.emit(Page.Events.Close);
     this.browserContext.emit(BrowserContext.Events.PageClosed, this);
-    this._closedPromise.resolve();
+    this.closedPromise.resolve();
     this.instrumentation.onPageClose(this);
     this.openScope.close(new TargetClosedError(this.closeReason()));
   }
@@ -403,8 +407,11 @@ export class Page extends SdkObject<PageEventMap> {
     this._consoleMessages.length = 0;
   }
 
-  consoleMessages() {
-    return this._consoleMessages;
+  consoleMessages(filter?: 'all' | 'sinceNavigation') {
+    if (filter === 'all')
+      return this._consoleMessages;
+    const marked = this._consoleMessages.findLastIndex(m => (m as any)[navigationMarkSymbol]);
+    return marked === -1 ? this._consoleMessages : this._consoleMessages.slice(marked + 1);
   }
 
   addPageError(pageError: Error) {
@@ -422,8 +429,11 @@ export class Page extends SdkObject<PageEventMap> {
     this._pageErrors.length = 0;
   }
 
-  pageErrors() {
-    return this._pageErrors;
+  pageErrors(filter?: 'all' | 'sinceNavigation') {
+    if (filter === 'all')
+      return this._pageErrors;
+    const marked = this._pageErrors.findLastIndex(e => (e as any)[navigationMarkSymbol]);
+    return marked === -1 ? this._pageErrors : this._pageErrors.slice(marked + 1);
   }
 
   async reload(progress: Progress, options: types.NavigateOptions): Promise<network.Response | null> {
@@ -787,7 +797,7 @@ export class Page extends SdkObject<PageEventMap> {
       await this.delegate.closePage(runBeforeUnload).catch(e => debugLogger.log('error', e));
     }
     if (!runBeforeUnload)
-      await this._closedPromise;
+      await this.closedPromise;
   }
 
   isClosed(): boolean {
@@ -842,6 +852,12 @@ export class Page extends SdkObject<PageEventMap> {
     const origin = frame.origin();
     if (origin)
       this.browserContext.addVisitedOrigin(origin);
+    if (frame === this.mainFrame()) {
+      if (this._consoleMessages.length > 0)
+        (this._consoleMessages[this._consoleMessages.length - 1] as any)[navigationMarkSymbol] = true;
+      if (this._pageErrors.length > 0)
+        (this._pageErrors[this._pageErrors.length - 1] as any)[navigationMarkSymbol] = true;
+    }
   }
 
   allInitScripts() {
@@ -870,8 +886,23 @@ export class Page extends SdkObject<PageEventMap> {
     await Promise.all(this.frames().map(frame => frame.hideHighlight().catch(() => {})));
   }
 
-  async snapshotForAI(progress: Progress, options: { track?: string, doNotRenderActive?: boolean } = {}): Promise<{ full: string, incremental?: string }> {
-    const snapshot = await snapshotFrameForAI(progress, this.mainFrame(), options);
+  async snapshotForAI(progress: Progress, options: { track?: string, doNotRenderActive?: boolean, selector?: string } = {}): Promise<{ full: string, incremental?: string }> {
+    if (options.selector && options.track)
+      throw new Error('Cannot specify both selector and track options');
+
+    let frame: frames.Frame;
+    let info: SelectorInfo | undefined;
+    if (options.selector) {
+      const resolved = await this.mainFrame().selectors.resolveInjectedForSelector(options.selector, { strict: true });
+      if (!resolved)
+        throw new Error(`Selector "${options.selector}" did not resolve to any element`);
+      frame = resolved.frame;
+      info = resolved.info;
+    } else {
+      frame = this.mainFrame();
+    }
+
+    const snapshot = await snapshotFrameForAI(progress, frame, { ...options, info });
     return { full: snapshot.full.join('\n'), incremental: snapshot.incremental?.join('\n') };
   }
 
@@ -913,6 +944,16 @@ export class Worker extends SdkObject<WorkerEventMap> {
     this._workerScriptLoaded = true;
     if (this.existingExecutionContext)
       this._executionContextPromise.resolve(this.existingExecutionContext);
+  }
+
+  protected _prepareContextForRestart() {
+    if (this.existingExecutionContext)
+      this.existingExecutionContext.contextDestroyed('Service worker restarted');
+    this.existingExecutionContext = null;
+    // Reset so createExecutionContext() waits for workerScriptLoaded() before resolving —
+    // mirroring initial startup and ensuring the script has run before evaluations proceed.
+    this._workerScriptLoaded = false;
+    this._executionContextPromise = new ManualPromise<js.ExecutionContext>();
   }
 
   didClose() {
@@ -1006,20 +1047,33 @@ export class InitScript extends DisposableObject {
   }
 }
 
-async function snapshotFrameForAI(progress: Progress, frame: frames.Frame, options: { track?: string, doNotRenderActive?: boolean } = {}): Promise<{ full: string[], incremental?: string[] }> {
+async function snapshotFrameForAI(progress: Progress, frame: frames.Frame, options: { track?: string, doNotRenderActive?: boolean, info?: SelectorInfo } = {}): Promise<{ full: string[], incremental?: string[] }> {
   // Only await the topmost navigations, inner frames will be empty when racing.
   const snapshot = await frame.retryWithProgressAndTimeouts(progress, [1000, 2000, 4000, 8000], async continuePolling => {
     try {
       const context = await progress.race(frame._utilityContext());
       const injectedScript = await progress.race(context.injectedScript());
       const snapshotOrRetry = await progress.race(injectedScript.evaluate((injected, options) => {
+        if (options.info) {
+          const element = injected.querySelector(options.info.parsed, injected.document, options.info.strict);
+          if (!element)
+            return false;
+          return injected.incrementalAriaSnapshot(element, { mode: 'ai', ...options });
+        }
         const node = injected.document.body;
         if (!node)
           return true;
         return injected.incrementalAriaSnapshot(node, { mode: 'ai', ...options });
-      }, { refPrefix: frame.seq ? 'f' + frame.seq : '', track: options.track, doNotRenderActive: options.doNotRenderActive }));
+      }, {
+        refPrefix: frame.seq ? 'f' + frame.seq : '',
+        track: options.track,
+        doNotRenderActive: options.doNotRenderActive,
+        info: options.info,
+      }));
       if (snapshotOrRetry === true)
         return continuePolling;
+      if (snapshotOrRetry === false)
+        throw new NonRecoverableDOMError(`Selector "${stringifySelector(options.info!.parsed)}" does not match any element`);
       return snapshotOrRetry;
     } catch (e) {
       if (frame.isNonRetriableError(e))
@@ -1069,7 +1123,7 @@ async function snapshotFrameRefForAI(progress: Progress, parentFrame: frames.Fra
   if (!child)
     return { full: [] };
   try {
-    return await snapshotFrameForAI(progress, child.frame, options);
+    return await snapshotFrameForAI(progress, child.frame, { ...options, info: undefined });
   } catch {
     return { full: [] };
   }

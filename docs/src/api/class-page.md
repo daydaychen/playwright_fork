@@ -710,58 +710,17 @@ current working directory.
 
 Raw CSS content to be injected into frame.
 
-## async method: Page.agent
-* since: v1.58
-* langs: js
-- returns: <[PageAgent]>
-
-Initialize page agent with the llm provider and cache.
-
-### option: Page.agent.cache
-* since: v1.58
-- `cache` <[Object]>
-  - `cacheFile` ?<[string]> Cache file to use/generate code for performed actions into. Cache is not used if not specified (default).
-  - `cacheOutFile` ?<[string]> When specified, generated entries are written into the `cacheOutFile` instead of updating the `cacheFile`.
-
-### option: Page.agent.expect
-* since: v1.58
-- `expect` <[Object]>
-  - `timeout` ?<[int]> Default timeout for expect calls in milliseconds, defaults to 5000ms.
-
-### option: Page.agent.limits
-* since: v1.58
-- `limits` <[Object]>
-  - `maxTokens` ?<[int]> Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value. Defaults to unlimited.
-  - `maxActions` ?<[int]> Maximum number of agentic actions to generate, defaults to 10.
-  - `maxActionRetries` ?<[int]> Maximum number retries per action, defaults to 3.
-
-Limits to use for the agentic loop.
-
-### option: Page.agent.provider
-* since: v1.58
-- `provider` <[Object]>
-  - `api` <[PageAgentAPI]<"openai"|"openai-compatible"|"anthropic"|"google">> API to use.
-  - `apiEndpoint` ?<[string]> Endpoint to use if different from default.
-  - `apiKey` <[string]> API key for the LLM provider.
-  - `apiTimeout` ?<[int]> Amount of time to wait for the provider to respond to each request.
-  - `model` <[string]> Model identifier within the provider. Required in non-cache mode.
-
-### option: Page.agent.secrets
-* since: v1.58
-- `secrets` ?<[Object]<[string], [string]>>
-
-Secrets to hide from the LLM.
-
-### option: Page.agent.systemPrompt
-* since: v1.58
-- `systemPrompt` <[string]>
-
-System prompt for the agent's loop.
-
 ## async method: Page.bringToFront
 * since: v1.8
 
 Brings page to front (activates tab).
+
+## async method: Page.cancelPickLocator
+* since: v1.59
+* langs: js
+
+Cancels an ongoing [`method: Page.pickLocator`] call by deactivating pick locator mode.
+If no pick locator mode is active, this method is a no-op.
 
 ## async method: Page.check
 * since: v1.8
@@ -2600,25 +2559,6 @@ Throws for non-input elements. However, if the element is inside the `<label>` e
 ### option: Page.inputValue.timeout = %%-input-timeout-js-%%
 * since: v1.13
 
-## method: Page.inspector
-* since: v1.59
-* langs: js
-- returns: <[Inspector]>
-
-Returns the [Inspector] object associated with this page.
-
-**Usage**
-
-```js
-const inspector = page.inspector();
-inspector.on('screencastFrame', data => {
-  console.log('received frame, jpeg size:', data.length);
-});
-await inspector.startScreencast();
-// ... perform actions ...
-await inspector.stopScreencast();
-```
-
 ## async method: Page.isChecked
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.isChecked`] instead. Read more about [locators](../locators.md).
@@ -2760,6 +2700,14 @@ Clears all stored page errors from this page. Subsequent calls to [`method: Page
 
 Returns up to (currently) 200 last console messages from this page. See [`event: Page.console`] for more details.
 
+### option: Page.consoleMessages.filter
+* since: v1.59
+- `filter` <[ConsoleMessagesFilter]<"all"|"sinceNavigation">>
+
+Controls which messages are returned:
+- `'sinceNavigation'` (default) — returns only messages logged after the last committed main-frame navigation.
+- `'all'` — returns all stored console messages.
+
 
 ## async method: Page.pageErrors
 * since: v1.56
@@ -2774,6 +2722,15 @@ Returns up to (currently) 200 last page errors from this page. See [`event: Page
 - returns: <[Array]<[string]>>
 
 Returns up to (currently) 200 last page errors from this page. See [`event: Page.pageError`] for more details.
+
+### option: Page.pageErrors.filter
+* since: v1.59
+* langs: js
+- `filter` <[PageErrorsFilter]<"all"|"sinceNavigation">>
+
+Controls which errors are returned:
+- `'sinceNavigation'` (default) — returns only errors thrown after the last committed main-frame navigation.
+- `'all'` — returns all stored page errors.
 
 
 ## method: Page.locator
@@ -3077,6 +3034,20 @@ Whether or not to generate tagged (accessible) PDF. Defaults to `false`.
 
 Whether or not to embed the document outline into the PDF. Defaults to `false`.
 
+## async method: Page.pickLocator
+* since: v1.59
+* langs: js
+- returns: <[Locator]>
+
+Enters pick locator mode where hovering over page elements highlights them and shows the corresponding locator.
+Once the user clicks an element, the mode is deactivated and the [Locator] for the picked element is returned.
+
+**Usage**
+
+```js
+const locator = await page.pickLocator();
+console.log(locator);
+```
 
 ## async method: Page.press
 * since: v1.8
@@ -3886,6 +3857,25 @@ Handler function to route the WebSocket.
 Handler function to route the WebSocket.
 
 
+## property: Page.screencast
+* since: v1.59
+* langs: js
+- type: <[Screencast]>
+
+[Screencast] object associated with this page.
+
+**Usage**
+
+```js
+page.screencast.on('screencastFrame', data => {
+  console.log('received frame, jpeg size:', data.length);
+});
+await page.screencast.start();
+// ... perform actions ...
+await page.screencast.stop();
+```
+
+
 ## async method: Page.screenshot
 * since: v1.8
 - returns: <[Buffer]>
@@ -4220,6 +4210,27 @@ Page width in pixels.
 - `height` <[int]>
 
 Page height in pixels.
+
+## async method: Page.snapshotForAI
+* since: v1.59
+- returns: <[Object]>
+  - `full` <[string]> Full accessibility snapshot of the page.
+  - `incremental` ?<[string]> Incremental snapshot containing only changes since the last tracked snapshot, when using the [`option: Page.snapshotForAI.track`] option.
+
+Returns an accessibility snapshot of the page optimized for AI consumption.
+
+### option: Page.snapshotForAI.timeout = %%-input-timeout-%%
+* since: v1.59
+
+### option: Page.snapshotForAI.timeout = %%-input-timeout-js-%%
+* since: v1.59
+
+### option: Page.snapshotForAI.track
+* since: v1.59
+- `track` <[string]>
+
+When specified, enables incremental snapshots. Subsequent calls with the same track name will return
+an incremental snapshot containing only changes since the last call.
 
 ## async method: Page.tap
 * since: v1.8

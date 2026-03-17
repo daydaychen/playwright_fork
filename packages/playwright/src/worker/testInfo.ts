@@ -70,8 +70,6 @@ type TestInfoCallbacks = {
   onStepEnd: (payload: ipc.StepEndPayload) => void;
   onAttach: (payload: ipc.AttachmentPayload) => void;
   onTestPaused: (payload: ipc.TestPausedPayload) => Promise<ipc.ResumePayload>;
-  onCloneStorage: (payload: ipc.CloneStoragePayload) => Promise<string>;
-  onUpstreamStorage: (payload: ipc.UpstreamStoragePayload) => Promise<void>;
 };
 
 export const emtpyTestInfoCallbacks: TestInfoCallbacks = {
@@ -79,8 +77,6 @@ export const emtpyTestInfoCallbacks: TestInfoCallbacks = {
   onStepEnd: () => {},
   onAttach: () => {},
   onTestPaused: () => Promise.reject(new Error('TestInfoImpl not initialized')),
-  onCloneStorage: () => Promise.reject(new Error('TestInfoImpl not initialized')),
-  onUpstreamStorage: () => Promise.resolve(),
 };
 
 export class TestInfoImpl implements TestInfo {
@@ -138,6 +134,7 @@ export class TestInfoImpl implements TestInfo {
   errors: ipc.TestInfoErrorImpl[] = [];
   readonly _attachmentsPush: (...items: TestInfo['attachments']) => number;
   private _workerParams: ipc.WorkerInitParams;
+  private _ignoreTimeoutsCounter = 0;
 
   get error(): ipc.TestInfoErrorImpl | undefined {
     return this.errors[0];
@@ -205,7 +202,7 @@ export class TestInfoImpl implements TestInfo {
 
     this._timeoutManager = new TimeoutManager(this.project.timeout);
     if (configInternal.configCLIOverrides.debug)
-      this._setDebugMode();
+      this._setIgnoreTimeouts(true);
 
     this.outputDir = (() => {
       const relativeTestFilePath = path.relative(this.project.testDir, this._requireFile.replace(/\.(spec|test)\.(js|ts|jsx|tsx|mjs|mts|cjs|cts)$/, ''));
@@ -466,8 +463,9 @@ export class TestInfoImpl implements TestInfo {
     return ['beforeAll', 'afterAll', 'beforeEach', 'afterEach'].includes(type) ? type : undefined;
   }
 
-  _setDebugMode() {
-    this._timeoutManager.setIgnoreTimeouts();
+  _setIgnoreTimeouts(ignoreTimeouts: boolean) {
+    this._ignoreTimeoutsCounter += ignoreTimeouts ? 1 : -1;
+    this._timeoutManager.setIgnoreTimeouts(this._ignoreTimeoutsCounter > 0);
   }
 
   async _didFinishTestFunction() {
@@ -645,14 +643,6 @@ export class TestInfoImpl implements TestInfo {
 
   setTimeout(timeout: number) {
     this._timeoutManager.setTimeout(timeout);
-  }
-
-  async _cloneStorage(storageFile: string): Promise<string> {
-    return await this._callbacks.onCloneStorage!({ storageFile });
-  }
-
-  async _upstreamStorage(storageFile: string, storageOutFile: string) {
-    await this._callbacks.onUpstreamStorage!({ storageFile, storageOutFile });
   }
 
   artifactsDir(): string {

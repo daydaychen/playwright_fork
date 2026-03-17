@@ -17,14 +17,18 @@
 import fs from 'fs';
 import path from 'path';
 
+import { chromium } from 'playwright-core';
+
 import { test as baseTest } from './fixtures';
 import { killProcessGroup } from '../config/commonFixtures';
 
+import type { Page } from 'playwright-core';
 import type { CommonFixtures } from '../config/commonFixtures';
 
 export { expect } from './fixtures';
 export const test = baseTest.extend<{
   cliEnv: Record<string, string>,
+  openDashboard: () => Promise<Page>,
   cli: (...args: any[]) => Promise<{
     output: string,
     error: string,
@@ -36,6 +40,25 @@ export const test = baseTest.extend<{
 }>({
   cliEnv: async ({}, use) => {
     await use(cliEnv());
+  },
+  openDashboard: async ({ cli, waitForPort, findFreePort }, use) => {
+    const dashboards = [];
+    await use(async () => {
+      const debugPort = await findFreePort();
+      await cli('show', { env: { PLAYWRIGHT_DASHBOARD_DEBUG_PORT: String(debugPort) } });
+      await waitForPort(debugPort);
+      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
+      const dashboard = browser.contexts()[0].pages()[0];
+      dashboards.push({ dashboard, browser });
+      return dashboard;
+    });
+    for (const { dashboard, browser } of dashboards) {
+      await Promise.all([
+        // Closing the page should close the browser.
+        new Promise(r => browser.on('disconnected', r)),
+        dashboard.close()
+      ]);
+    }
   },
   cli: async ({ mcpBrowser, mcpHeadless, childProcess }, use) => {
     const sessions: { name: string, pid: number }[] = [];
@@ -64,8 +87,9 @@ export const test = baseTest.extend<{
 
 function cliEnv() {
   return {
+    PLAYWRIGHT_SERVER_REGISTRY: test.info().outputPath('registry'),
     PLAYWRIGHT_DAEMON_SESSION_DIR: test.info().outputPath('daemon'),
-    PLAYWRIGHT_DAEMON_SOCKETS_DIR: path.join(test.info().project.outputDir, 'daemon-sockets'),
+    PLAYWRIGHT_DAEMON_SOCKETS_DIR: path.join(test.info().project.outputDir, 'ds'),
   };
 }
 
@@ -74,7 +98,7 @@ async function runCli(childProcess: CommonFixtures['childProcess'], args: string
   return await test.step(stepTitle, async () => {
     const testInfo = test.info();
     const cli = childProcess({
-      command: [process.execPath, require.resolve('../../packages/playwright-core/lib/cli/client/cli.js'), ...args],
+      command: [process.execPath, require.resolve('../../packages/playwright-core/lib/tools/cli-client/cli.js'), ...args],
       cwd: cliOptions.cwd ?? testInfo.outputPath(),
       env: {
         ...process.env,

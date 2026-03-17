@@ -356,6 +356,27 @@ export default [
     },
   },
   {
+    files: ["packages/playwright-core/src/tools/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [{
+            group: ["**/client", "**/client/**"],
+            message: "tools/ must not import from client/",
+          }],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSAsExpression > TSAnyKeyword",
+          message: "Avoid 'as any' — risk of accidentally casting to client interfaces. Use a precise type or add an eslint-disable with justification.",
+        },
+      ],
+    },
+  },
+  {
     files: [
       "packages/playwright-core/src/utils/**/*.ts",
     ],

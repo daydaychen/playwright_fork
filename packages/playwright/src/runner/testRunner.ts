@@ -69,7 +69,6 @@ export type RunTestsParams = {
   workers?: number | string;
   updateSnapshots?: 'all' | 'changed' | 'missing' | 'none';
   updateSourceMethod?: 'overwrite' | 'patch' | '3way';
-  runAgents?: 'all' | 'missing' | 'none';
   reporters?: string[],
   trace?: 'on' | 'off';
   video?: 'on' | 'off';
@@ -324,7 +323,7 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
       reporter: params.reporters ? params.reporters.map(r => [r]) : undefined,
       use: {
         ...this._configCLIOverrides.use,
-        ...(params.trace === 'on' ? { trace: { mode: 'on', sources: false, _live: true } } : {}),
+        ...(params.trace === 'on' ? { trace: { mode: 'on', sources: false, live: true } } : {}),
         ...(params.trace === 'off' ? { trace: 'off' } : {}),
         ...(params.video === 'on' || params.video === 'off' ? { video: params.video } : {}),
         ...(params.headed !== undefined ? { headless: !params.headed } : {}),
@@ -334,7 +333,6 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
       },
       ...(params.updateSnapshots ? { updateSnapshots: params.updateSnapshots } : {}),
       ...(params.updateSourceMethod ? { updateSourceMethod: params.updateSourceMethod } : {}),
-      ...(params.runAgents ? { runAgents: params.runAgents } : {}),
       ...(params.workers ? { workers: params.workers } : {}),
     };
 

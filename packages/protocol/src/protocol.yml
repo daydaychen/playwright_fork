@@ -429,6 +429,12 @@ LifecycleEvent:
   - networkidle
   - commit
 
+ConsoleMessagesFilter:
+  type: enum
+  literals:
+  - all
+  - sinceNavigation
+
 CommonScreenshotOptions:
   type: mixin
   properties:
@@ -1037,11 +1043,10 @@ Browser:
       title: Start server
       parameters:
         title: string
-        wsPath: string?
         workspaceDir: string?
+        metadata: json?
       returns:
-        wsEndpoint: string?
-        pipeName: string?
+        pipeName: string
 
     stopServer:
       title: Stop server
@@ -1188,6 +1193,7 @@ BrowserContext:
   extends: EventTarget
 
   initializer:
+    debugger: Debugger
     requestContext: APIRequestContext
     tracing: Tracing
     options:
@@ -1615,6 +1621,8 @@ Page:
     consoleMessages:
       title: Get console messages
       group: getter
+      parameters:
+        filter: ConsoleMessagesFilter?
       returns:
         messages:
           type: array
@@ -1959,6 +1967,8 @@ Page:
     pageErrors:
       title: Get page errors
       group: getter
+      parameters:
+        filter: ConsoleMessagesFilter?
       returns:
         errors:
           type: array
@@ -2003,6 +2013,7 @@ Page:
       parameters:
         # When track is present, an incremental snapshot is returned when possible.
         track: string?
+        selector: string?
         timeout: float
       returns:
         full: string
@@ -2125,28 +2136,6 @@ Page:
           - requestFinished
           - requestFailed
         enabled: boolean
-
-    agent:
-      internal: true
-      parameters:
-        api: string?
-        apiKey: string?
-        apiEndpoint: string?
-        apiTimeout: int?
-        apiCacheFile: string?
-        cacheFile: string?
-        cacheOutFile: string?
-        doNotRenderActive: boolean?
-        maxActions: int?
-        maxActionRetries: int?
-        maxTokens: int?
-        model: string?
-        secrets:
-          type: array?
-          items: NameValue
-        systemPrompt: string?
-      returns:
-        agent: PageAgent
 
     setDockTile:
       internal: true
@@ -2882,7 +2871,7 @@ Frame:
       parameters:
         selector: string?
         expression: string
-        expressionArg: string?
+        expressionArg: json?
         expectedText:
           type: array?
           items: ExpectedTextValue
@@ -3807,6 +3796,47 @@ BindingCall:
 
 
 
+Debugger:
+  type: interface
+
+  extends: EventTarget
+
+  commands:
+
+    setPauseAt:
+      title: Configure pause behavior
+      group: configuration
+      parameters:
+        next: boolean?
+        location:
+          type: object?
+          properties:
+            file: string
+            line: int?
+            column: int?
+
+    resume:
+      title: Resume
+      group: configuration
+
+  events:
+
+    pausedStateChanged:
+      parameters:
+        pausedDetails:
+          type: array
+          items:
+            type: object
+            properties:
+              location:
+                type: object
+                properties:
+                  file: string
+                  line: int?
+                  column: int?
+              title: string
+
+
 Dialog:
   type: interface
 
@@ -4446,77 +4476,3 @@ JsonPipe:
         reason: string?
 
 
-PageAgent:
-  type: interface
-  extends: EventTarget
-
-  initializer:
-    page: Page
-
-  commands:
-    perform:
-      title: 'Perform "{task}"'
-      parameters:
-        task: string
-        $mixin: PageAgentOptions
-
-      returns:
-        usage: AgentUsage
-
-    expect:
-      title: 'Expect "{expectation}"'
-      parameters:
-        expectation: string
-        $mixin: PageAgentOptions
-
-      returns:
-        usage: AgentUsage
-
-    extract:
-      title: 'Extract "{query}"'
-      parameters:
-        query: string
-        schema: json
-        $mixin: PageAgentOptions
-
-      returns:
-        result: json
-        usage: AgentUsage
-
-    dispose:
-      internal: true
-
-    usage:
-      title: 'Get agent usage'
-      group: configuration
-      returns:
-        usage: AgentUsage
-
-  events:
-
-    turn:
-      parameters:
-        role: string
-        message: string
-        usage:
-          type: object?
-          properties:
-            inputTokens: int
-            outputTokens: int
-
-
-PageAgentOptions:
-  type: mixin
-  properties:
-    maxActions: int?
-    maxActionRetries: int?
-    maxTokens: int?
-    cacheKey: string?
-    timeout: int?
-
-AgentUsage:
-  type: object
-  properties:
-    turns: int
-    inputTokens: int
-    outputTokens: int

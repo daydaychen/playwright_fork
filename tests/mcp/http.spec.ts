@@ -15,7 +15,6 @@
  */
 
 import fs from 'fs';
-import net from 'net';
 import dns from 'dns';
 
 import { ChildProcess, spawn } from 'child_process';
@@ -23,7 +22,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { test as baseTest, expect, mcpServerPath, formatLog } from './fixtures';
 
-import type { Config } from '../../packages/playwright-core/src/mcp/config.d';
+import type { Config } from '../../packages/playwright-core/src/tools/mcp/config.d';
 import { ListRootsRequestSchema } from 'playwright-core/lib/mcpBundle';
 
 const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noPort?: boolean }) => Promise<{ url: URL, stderr: () => string }> }>({
@@ -199,8 +198,8 @@ test('http transport browser lifecycle (isolated, multiclient)', async ({ server
     'create http session': 3,
     'delete http session': 3,
     'create context': 3,
-    'create browser (isolated)': 3,
-    'close browser': 3,
+    'create browser (isolated)': 1,
+    'close browser': 1,
   });
 });
 
@@ -360,7 +359,7 @@ test('should respect allowed hosts (negative)', async ({ serverEndpoint }) => {
   expect(await response.text()).toContain('Access is only allowed at example.com');
 });
 
-test('should respect allowed hosts (positive)', async ({ serverEndpoint }) => {
+test('should respect allowed hosts (positive)', async ({ serverEndpoint, findFreePort }) => {
   const port = await findFreePort();
   await serverEndpoint({
     args: [
@@ -381,14 +380,3 @@ test('should be able to allow any host', async ({ serverEndpoint }) => {
   expect(response.status).toBe(400);
   expect(await response.text()).toBe('Invalid request');
 });
-
-async function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-    server.on('error', reject);
-  });
-}

@@ -23,6 +23,7 @@ import { BrowserType } from './browserType';
 import { CDPSession } from './cdpSession';
 import { ChannelOwner } from './channelOwner';
 import { createInstrumentation } from './clientInstrumentation';
+import { Debugger } from './debugger';
 import { Dialog } from './dialog';
 import { DisposableObject } from './disposable';
 import { Electron, ElectronApplication } from './electron';
@@ -42,8 +43,6 @@ import { Worker } from './worker';
 import { WritableStream } from './writableStream';
 import { ValidationError, findValidator  } from '../protocol/validator';
 import { rewriteErrorMessage } from '../utils/isomorphic/stackTrace';
-import { PageAgent } from './pageAgent';
-
 import type { ClientInstrumentation } from './clientInstrumentation';
 import type { HeadersArray } from './types';
 import type { ValidatorContext } from '../protocol/validator';
@@ -268,6 +267,9 @@ export class Connection extends EventEmitter {
       case 'CDPSession':
         result = new CDPSession(parent, type, guid, initializer);
         break;
+      case 'Debugger':
+        result = new Debugger(parent, type, guid, initializer);
+        break;
       case 'Dialog':
         result = new Dialog(parent, type, guid, initializer);
         break;
@@ -299,9 +301,6 @@ export class Connection extends EventEmitter {
         break;
       case 'Page':
         result = new Page(parent, type, guid, initializer);
-        break;
-      case 'PageAgent':
-        result = new PageAgent(parent, type, guid, initializer);
         break;
       case 'Playwright':
         result = new Playwright(parent, type, guid, initializer);

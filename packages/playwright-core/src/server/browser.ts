@@ -26,7 +26,7 @@ import { Page } from './page';
 import { ClientCertificatesProxy } from './socksClientCertificatesInterceptor';
 import { PlaywrightPipeServer } from '../remote/playwrightPipeServer';
 import { PlaywrightWebSocketServer } from '../remote/playwrightWebSocketServer';
-import { serverRegistry } from '../serverRegistry';
+import { BrowserInfo, serverRegistry } from '../serverRegistry';
 
 import type * as types from './types';
 import type { ProxySettings } from './types';
@@ -35,6 +35,7 @@ import type * as channels from '@protocol/channels';
 import type { ChildProcess } from 'child_process';
 import type { Language } from '../utils';
 import type { Progress } from './progress';
+import type * as playwright from '../..';
 
 export interface BrowserProcess {
   onclose?: ((exitCode: number | null, signal: string | null) => void);
@@ -61,6 +62,7 @@ export type BrowserOptions = {
   wsEndpoint?: string;  // Only there when connected over web socket.
   sdkLanguage?: Language;
   originalLaunchOptions: types.LaunchOptions;
+  userDataDir?: string;
 };
 
 export abstract class Browser extends SdkObject {
@@ -172,7 +174,7 @@ export abstract class Browser extends SdkObject {
     return video?.artifact;
   }
 
-  async startServer(title: string, options: { workspaceDir?: string, wsPath?: string, pipeName?: string }): Promise<{ wsEndpoint?: string, pipeName?: string }> {
+  async startServer(title: string, options: channels.BrowserStartServerOptions): Promise<{ pipeName: string }> {
     return await this._server.start(title, options);
   }
 
@@ -217,34 +219,34 @@ export class BrowserServer {
     this._browser = browser;
   }
 
-  async start(title: string, options: { workspaceDir?: string, wsPath?: string }): Promise<{ wsEndpoint?: string, pipeName?: string }> {
+  async start(title: string, options: channels.BrowserStartServerOptions): Promise<{ pipeName: string }> {
     if (this._isStarted)
       throw new Error(`Server is already started.`);
     this._isStarted = true;
 
-    const result: { wsEndpoint?: string, pipeName?: string } = {};
     this._pipeServer = new PlaywrightPipeServer(this._browser);
     this._pipeSocketPath = await this._socketPath();
     await this._pipeServer.listen(this._pipeSocketPath);
-    result.pipeName = this._pipeSocketPath;
+    const pipeName = this._pipeSocketPath;
 
-    if (options.wsPath) {
-      const path = options.wsPath.startsWith('/') ? options.wsPath : `/${options.wsPath}`;
-      this._wsServer = new PlaywrightWebSocketServer(this._browser, path);
-      result.wsEndpoint = await this._wsServer.listen(0, 'localhost', path);
-    }
-
-    await serverRegistry.create(this._browser, {
+    const browserInfo: BrowserInfo = {
+      guid: this._browser.guid,
+      browserName: this._browser.options.browserType,
+      launchOptions: asClientLaunchOptions(this._browser.options.originalLaunchOptions),
+      userDataDir: this._browser.options.userDataDir,
+    };
+    await serverRegistry.create(browserInfo, {
       title,
-      wsEndpoint: result.wsEndpoint,
-      pipeName: result.pipeName,
+      pipeName,
       workspaceDir: options.workspaceDir,
+      metadata: options.metadata,
     });
-    return result;
+    return { pipeName };
   }
 
   async stop() {
-    await serverRegistry.delete(this._browser);
+    if (!this._browser.options.userDataDir)
+      await serverRegistry.delete(this._browser.guid);
     if (this._pipeSocketPath && process.platform !== 'win32')
       await fs.promises.unlink(this._pipeSocketPath).catch(() => {});
     await this._pipeServer?.close();
@@ -262,4 +264,11 @@ export class BrowserServer {
     await fs.promises.mkdir(socketsDir, { recursive: true });
     return path.join(socketsDir, socketName);
   }
+}
+
+function asClientLaunchOptions(serverOptions: types.LaunchOptions): playwright.LaunchOptions {
+  return {
+    ...serverOptions,
+    env: serverOptions.env ? Object.fromEntries(serverOptions.env.map(({ name, value }) => [name, value])) : undefined,
+  };
 }

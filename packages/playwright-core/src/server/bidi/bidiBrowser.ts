@@ -143,7 +143,7 @@ export class BidiBrowser extends Browser {
         page._getFrameNode(frame).then(node => {
           const attributes = node?.value?.attributes;
           frame._name = attributes?.name ?? attributes?.id ?? '';
-        });
+        }, () => {});
         return;
       }
       return;
@@ -505,6 +505,7 @@ export class BidiBrowserContext extends BrowserContext {
     await this._browser._browserSession.send('browser.removeUserContext', {
       userContext: this._browserContextId
     });
+    await Promise.all(this._bidiPages().map(bidiPage => bidiPage._page.closedPromise));
     this._browser._contexts.delete(this._browserContextId);
   }
 

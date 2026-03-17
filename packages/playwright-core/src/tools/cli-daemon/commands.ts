@@ -866,6 +866,27 @@ const xpathExtract = declareCommand({
   }),
 });
 
+// Network Response Command
+
+const getNetworkResponse = declareCommand({
+  name: 'get-network-response',
+  description: 'Get detailed network response information',
+  category: 'devtools',
+  args: z.object({
+    ['request-id']: z.string().describe('Request ID from network list'),
+  }),
+  options: z.object({
+    ['include-headers']: z.boolean().optional().describe('Include response headers'),
+    ['include-payload']: z.boolean().optional().describe('Include request payload'),
+  }),
+  toolName: 'browser_get_network_response',
+  toolParams: ({ ['request-id']: requestId, ['include-headers']: includeHeaders, ['include-payload']: includePayload }) => ({
+    requestId,
+    includeHeaders,
+    includePayload,
+  }),
+});
+
 // Sessions
 
 const sessionList = declareCommand({
@@ -1045,6 +1066,7 @@ const commandsArray: AnyCommandSchema[] = [
   devtoolsShow,
   getHtml,
   xpathExtract,
+  getNetworkResponse,
 
   // session category
   sessionList,

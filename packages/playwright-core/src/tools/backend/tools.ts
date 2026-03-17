@@ -40,6 +40,7 @@ import tracing from './tracing';
 import verify from './verify';
 import video from './video';
 import wait from './wait';
+import xpath from './xpath';
 import webstorage from './webstorage';
 
 import type { Tool } from './tool';
@@ -70,6 +71,7 @@ export const browserTools: Tool<any>[] = [
   ...verify,
   ...video,
   ...wait,
+  ...xpath,
   ...webstorage,
 ];
 

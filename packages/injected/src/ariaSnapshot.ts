@@ -40,6 +40,7 @@ export type AriaTreeOptions = {
   mode: 'ai' | 'expect' | 'codegen' | 'autoexpect';
   refPrefix?: string;
   doNotRenderActive?: boolean;
+  includeHTMLAttributes?: boolean;
 };
 
 type InternalOptions = {
@@ -295,7 +296,14 @@ function normalizeGenericRoles(node: aria.AriaNode) {
     }
 
     // Only remove generic that encloses one element, logical grouping still makes sense, even if it is not ref-able.
-    const removeSelf = node.role === 'generic' && !node.name && result.length <= 1 && result.every(c => typeof c !== 'string' && !!c.ref);
+    // Also preserve generic nodes that have meaningful HTML attributes (id, class, data-*) for XPath stability.
+    const element = ariaNodeElement(node);
+    const hasHtmlAttributes = element && (
+      element.id ||
+      element.className ||
+      Array.from(element.attributes).some((attr: Attr) => attr.name.startsWith('data-'))
+    );
+    const removeSelf = node.role === 'generic' && !node.name && !hasHtmlAttributes && result.length <= 1 && result.every(c => typeof c !== 'string' && !!c.ref);
     if (removeSelf)
       return result;
     node.children = result;
@@ -590,6 +598,21 @@ export function renderAriaTree(ariaSnapshot: AriaSnapshot, publicOptions: AriaTr
       if (name) {
         const stringifiedName = name.startsWith('/') && name.endsWith('/') ? name : JSON.stringify(name);
         key += ' ' + stringifiedName;
+      }
+    }
+    if (publicOptions.includeHTMLAttributes !== false) {
+      const element = ariaNodeElement(ariaNode);
+      if (element) {
+        key += ` [tag=${element.tagName.toLowerCase()}]`;
+        if (element.id)
+          key += ` [id=${element.id}]`;
+        if (element.className)
+          key += ` [class=${element.className}]`;
+        for (let i = 0; i < element.attributes.length; i++) {
+          const attr = element.attributes[i];
+          if (attr.name.startsWith('data-'))
+            key += ` [${attr.name}=${attr.value}]`;
+        }
       }
     }
     if (ariaNode.checked === 'mixed')

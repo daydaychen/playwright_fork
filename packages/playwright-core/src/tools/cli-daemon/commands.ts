@@ -812,6 +812,37 @@ const devtoolsShow = declareCommand({
   toolParams: () => ({}),
 });
 
+// HTML Cleaning Command
+
+const getHtml = declareCommand({
+  name: 'get-html',
+  description: 'Get cleaned HTML content from the page',
+  category: 'devtools',
+  args: z.object({
+    locator: z.string().optional().describe('Optional locator to get HTML from a specific element'),
+  }),
+  options: z.object({
+    ['remove-scripts']: z.boolean().optional().describe('Remove script tags'),
+    ['remove-styles']: z.boolean().optional().describe('Remove style tags'),
+    ['remove-comments']: z.boolean().optional().describe('Remove HTML comments'),
+    ['remove-meta']: z.boolean().optional().describe('Remove meta tags'),
+    ['remove-svg']: z.boolean().optional().describe('Remove SVG elements'),
+    minify: z.boolean().optional().describe('Minify HTML output'),
+    ['max-length']: numberArg.optional().describe('Maximum length of output'),
+  }),
+  toolName: ({ locator }) => locator ? 'browser_get_html_with_locator' : 'browser_get_html',
+  toolParams: ({ locator, ['remove-scripts']: removeScripts, ['remove-styles']: removeStyles, ['remove-comments']: removeComments, ['remove-meta']: removeMeta, ['remove-svg']: removeSvg, minify, ['max-length']: maxLength }) => ({
+    locator,
+    removeScripts,
+    removeStyles,
+    removeComments,
+    removeMeta,
+    removeSvg,
+    minify,
+    maxLength,
+  }),
+});
+
 // Sessions
 
 const sessionList = declareCommand({
@@ -989,6 +1020,7 @@ const commandsArray: AnyCommandSchema[] = [
   videoStart,
   videoStop,
   devtoolsShow,
+  getHtml,
 
   // session category
   sessionList,

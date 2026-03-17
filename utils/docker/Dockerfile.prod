@@ -1,0 +1,67 @@
+# ============================================================
+# Stage 1: Build - 构建阶段
+# ============================================================
+FROM hub-dev.hexin.cn/business-baseimage-python/ubuntu:jammy-20250126 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+ENV NODE_VERSION=24.12.0
+ENV NPM_MIRROR=http://repositories-public.myhexin.com:8087/repository/npm-public/
+ENV SASS_BINARY_SITE=http://repositories-public.myhexin.com:8087/repository/node-taobao-mirror/node-sass/
+ENV NODEJS_ORG_MIRROR=http://repositories-public.myhexin.com:8087/repository/node-taobao-mirror/node/
+ENV PLAYWRIGHT_DOWNLOAD_HOST=http://repositories-public.myhexin.com:8087/repository/node-taobao-mirror/playwright/
+ENV ELECTRON_MIRROR=http://repositories-public.myhexin.com:8087/repository/node-taobao-mirror/electron/
+ENV ELECTRON_BUILDER_BINARIES_MIRROR=http://repositories-public.myhexin.com:8087/repository/node-taobao-mirror/electron-builder-binaries/
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+
+RUN echo "deb [trusted=yes] http://repositories-public.myhexin.com:8087/repository/apt-aliyun/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+    echo "deb [trusted=yes] http://repositories-public.myhexin.com:8087/repository/apt-aliyun/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb [trusted=yes] http://repositories-public.myhexin.com:8087/repository/apt-aliyun/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb [trusted=yes] http://repositories-public.myhexin.com:8087/repository/apt-aliyun/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget gpg ca-certificates git netcat-openbsd tini \
+    vim.tiny procps net-tools telnet iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Node.js (使用内网 npm 镜像源)
+ENV NVM_DIR=/usr/local/nvm
+ENV PATH=${NVM_DIR}/bin:$PATH
+
+RUN mkdir -p ${NVM_DIR} && \
+    wget -qO /tmp/nodejs.tar.gz "${NODEJS_ORG_MIRROR}/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" && \
+    tar -xf /tmp/nodejs.tar.gz -C ${NVM_DIR} --strip-components=1 && \
+    rm /tmp/nodejs.tar.gz && \
+    ln -s ${NVM_DIR}/bin/node /usr/local/bin/node && \
+    ln -s ${NVM_DIR}/bin/npm /usr/local/bin/npm && \
+    ln -s ${NVM_DIR}/bin/npx /usr/local/bin/npx && \
+    npm config set registry "${NPM_MIRROR}" && \
+    npm install -g yarn
+
+# 复制项目源码
+COPY . /project
+
+WORKDIR /project
+
+# 配置 Git (用于版本信息)
+RUN git config --global advice.detachedHead false
+
+# 安装依赖并构建
+RUN npm ci && npm run build
+
+# 打包并安装 playwright-core，然后下载浏览器
+# 这样可以确保使用当前源码版本的 playwright-core
+RUN mkdir /ms-playwright && \
+    mkdir /ms-playwright-agent && \
+    cd /ms-playwright-agent && npm init -y && \
+    node /project/utils/pack_package.js playwright-core ./playwright-core.tar.gz && \
+    npm install ./playwright-core.tar.gz && \
+    npm exec --no -- playwright-core install-deps && rm -rf /var/lib/apt/lists/* && \
+    rm ./playwright-core.tar.gz && \
+    rm -rf /ms-playwright-agent && \
+    rm -rf ~/.npm/ && \
+    chmod -R 777 /ms-playwright
+
+ENTRYPOINT [ "/usr/bin/tini", "--", "/bin/bash", "/project/utils/docker/entrypoint.sh" ]
